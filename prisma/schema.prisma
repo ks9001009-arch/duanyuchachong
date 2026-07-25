@@ -1,0 +1,133 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TelegramCustomerStatus {
+  IDENTIFIED
+  DISABLED
+}
+
+enum PendingCustomerStatus {
+  PENDING_ID
+  RESOLVED
+  MERGED
+  CANCELLED
+}
+
+enum PendingFailureReason {
+  HIDDEN_FORWARD_ORIGIN
+  ID_NOT_AVAILABLE
+  MANUAL_PENDING
+}
+
+enum CustomerImportSource {
+  USER_PICKER_SINGLE
+  USER_PICKER_BATCH
+  FORWARDED_MESSAGE
+  MANUAL_ID
+  PENDING_RESOLUTION
+}
+
+enum CustomerImportResult {
+  CREATED
+  DUPLICATE
+  PROFILE_UPDATED
+  PENDING_CREATED
+  PENDING_RESOLVED
+  PENDING_MERGED
+  HIDDEN_SENDER
+  INVALID
+  FAILED
+}
+
+model SystemCounter {
+  key       String   @id
+  value     BigInt
+  updatedAt DateTime @updatedAt
+}
+
+model TelegramCustomer {
+  id                    String                  @id @default(cuid())
+  customerCode          String                  @unique
+  telegramId            BigInt                  @unique
+  username              String?
+  usernameNormalized    String?
+  firstName             String?
+  lastName              String?
+  displayName           String?
+  status                TelegramCustomerStatus  @default(IDENTIFIED)
+  firstImportedById     BigInt
+  firstImportedUsername String?
+  firstImportedName     String?
+  firstImportedAt       DateTime                @default(now())
+  firstImportSource     CustomerImportSource
+  archiveChatId         BigInt?
+  archiveMessageId      BigInt?
+  archiveMessageLink    String?
+  lastObservedAt        DateTime                @default(now())
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  importLogs            TelegramCustomerImportLog[]
+  resolvedPendingRecords PendingTelegramCustomer[]
+
+  @@index([usernameNormalized])
+  @@index([displayName])
+  @@index([firstImportedAt])
+}
+
+model PendingTelegramCustomer {
+  id                   String                @id @default(cuid())
+  pendingCode          String                @unique
+  visibleName          String?
+  visibleUsername      String?
+  note                 String?
+  failureReason        PendingFailureReason
+  status               PendingCustomerStatus @default(PENDING_ID)
+  operatorTelegramId   BigInt
+  operatorUsername     String?
+  operatorDisplayName  String?
+  sourceChatId         BigInt?
+  sourceMessageId      BigInt?
+  archiveChatId        BigInt?
+  archiveMessageId     BigInt?
+  archiveMessageLink   String?
+  resolvedCustomerId   String?
+  resolvedCustomer     TelegramCustomer?     @relation(fields: [resolvedCustomerId], references: [id], onDelete: SetNull)
+  resolvedByTelegramId BigInt?
+  resolvedAt           DateTime?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  @@index([status, createdAt])
+  @@index([operatorTelegramId, createdAt])
+  @@index([visibleName])
+  @@index([resolvedCustomerId])
+}
+
+model TelegramCustomerImportLog {
+  id                  String                @id @default(cuid())
+  customerId          String?
+  customer            TelegramCustomer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  targetTelegramId    BigInt?
+  operatorTelegramId  BigInt
+  operatorUsername    String?
+  operatorDisplayName String?
+  source              CustomerImportSource
+  result              CustomerImportResult
+  sourceChatId        BigInt?
+  sourceMessageId     BigInt?
+  archiveMessageLink  String?
+  metadata            Json?
+  failureReason       String?
+  createdAt           DateTime              @default(now())
+
+  @@index([customerId, createdAt])
+  @@index([targetTelegramId])
+  @@index([operatorTelegramId, createdAt])
+  @@index([source, result])
+}
