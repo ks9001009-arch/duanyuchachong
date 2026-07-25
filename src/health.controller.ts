@@ -1,14 +1,34 @@
-import { Controller, Get } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { PrismaService } from './prisma/prisma.service';
 
 @Controller()
 export class HealthController {
+  constructor(private readonly prisma: PrismaService) {}
+
   @Get()
-  root() {
-    return { ok: true, service: 'telegram-customer-registry-bot' };
+  async root() {
+    return this.health();
   }
 
   @Get('health')
-  health() {
-    return { status: 'ok' };
+  async health() {
+    try {
+      await this.prisma.$queryRaw`SELECT 1`;
+      return {
+        status: 'ok',
+        service: 'telegram-customer-registry',
+        database: 'connected',
+      };
+    } catch {
+      throw new ServiceUnavailableException({
+        status: 'error',
+        service: 'telegram-customer-registry',
+        database: 'disconnected',
+      });
+    }
   }
 }

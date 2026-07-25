@@ -293,7 +293,10 @@ export class CustomerRegistryService {
         source: CustomerImportSource.PENDING_RESOLUTION,
         result: CustomerImportResult.PENDING_MERGED,
         archiveMessageLink: existing.archiveMessageLink,
-        metadata: { pendingCode: pending.pendingCode },
+        metadata: {
+          pendingCode: pending.pendingCode,
+          ...(input.metadata ?? {}),
+        } as Prisma.InputJsonValue,
       });
 
       await this.safeReplyPendingResolved({
@@ -338,7 +341,10 @@ export class CustomerRegistryService {
       source: CustomerImportSource.PENDING_RESOLUTION,
       result: CustomerImportResult.PENDING_RESOLVED,
       archiveMessageLink: created.customer.archiveMessageLink,
-      metadata: { pendingCode: pending.pendingCode },
+      metadata: {
+        pendingCode: pending.pendingCode,
+        ...(input.metadata ?? {}),
+      } as Prisma.InputJsonValue,
     });
 
     await this.safeReplyPendingResolved({

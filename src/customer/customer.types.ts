@@ -53,6 +53,8 @@ export interface ResolvePendingInput {
   telegramId: bigint;
   operator: OperatorInfo;
   profile?: IdentifiedProfileInput;
+  /** 额外写入导入日志 metadata（如管理员操作信息），不改变核心查重逻辑 */
+  metadata?: Record<string, unknown>;
 }
 
 export type ResolveOutcome =

@@ -30,6 +30,13 @@ cp .env.example .env
 | `TELEGRAM_ENTRY_CHAT_IDS` | 授权录入群 ID，逗号分隔（私聊不需要） |
 | `TELEGRAM_ARCHIVE_CHAT_ID` | 统一客户存档群 ID |
 | `DATABASE_URL` | PostgreSQL 连接串 |
+| `ADMIN_INITIAL_USERNAME` | 初始管理员用户名（仅首次创建） |
+| `ADMIN_INITIAL_PASSWORD` | 初始管理员密码（必填，勿入库） |
+| `ADMIN_JWT_SECRET` | JWT 密钥（必填，勿入库） |
+| `ADMIN_JWT_EXPIRES_IN` | Token 有效期，默认 8h |
+| `ADMIN_CORS_ORIGINS` | 后台前端域名白名单 |
+| `APP_TIMEZONE` | 统计“今日”时区，默认 Asia/Yangon |
+| `ENABLE_SWAGGER` | 是否开启 `/api/docs` |
 
 ---
 
@@ -190,13 +197,100 @@ pnpm build
 
 ---
 
-## 12. 项目结构（摘要）
+## 12. 管理后台 API（当前阶段：仅后端）
+
+后台与机器人共用同一 PostgreSQL。前端域名计划为 `duan-yu.com`（本阶段不部署 React）。
+
+### 12.1 初始管理员
+
+在 `.env` / Render 配置：
+
+```env
+ADMIN_INITIAL_USERNAME=admin
+ADMIN_INITIAL_PASSWORD=请使用高强度密码
+ADMIN_JWT_SECRET=请使用至少16位随机密钥
+ADMIN_JWT_EXPIRES_IN=8h
+ADMIN_SYSTEM_OPERATOR_TELEGRAM_ID=请填写专用系统操作者Telegram数字ID（大于0）
+ADMIN_CORS_ORIGINS=http://localhost:5173,https://duan-yu.com,https://www.duan-yu.com
+APP_TIMEZONE=Asia/Yangon
+ENABLE_SWAGGER=true
+```
+
+- 仅当数据库中**没有任何**管理员时，启动会创建初始账号。
+- **已存在管理员时不会覆盖密码**。
+- **禁止**把 `ADMIN_INITIAL_PASSWORD` / `ADMIN_JWT_SECRET` 提交到 Git。
+
+### 12.2 JWT 登录
+
+```bash
+curl -X POST http://localhost:3000/api/admin/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"你的密码"}'
+```
+
+之后请求携带：
+
+```text
+Authorization: Bearer <accessToken>
+```
+
+修改密码：
+
+```text
+POST /api/admin/auth/change-password
+{"oldPassword":"...","newPassword":"至少8位"}
+```
+
+### 12.3 API 列表
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/admin/auth/login` | 登录 |
+| GET | `/api/admin/auth/me` | 当前管理员 |
+| POST | `/api/admin/auth/change-password` | 改密 |
+| GET | `/api/admin/dashboard/summary` | 仪表盘统计 |
+| GET | `/api/admin/customers` | 正式客户列表 |
+| GET | `/api/admin/customers/:id` | 客户详情 |
+| GET | `/api/admin/customers/by-telegram-id/:telegramId` | ID 精准定位 |
+| GET | `/api/admin/pending-customers` | 待确认列表 |
+| GET | `/api/admin/pending-customers/:id` | 待确认详情 |
+| POST | `/api/admin/pending-customers/:id/resolve` | 后台补充身份 |
+| GET | `/api/admin/import-logs` | 录入日志 |
+| GET | `/api/admin/admin-login-logs` | 管理员登录日志 |
+| GET | `/health` | 健康检查 |
+
+Swagger（非生产或 `ENABLE_SWAGGER=true`）：`/api/docs`
+
+### 12.4 管理员账号丢失恢复
+
+1. 用有权限的数据库客户端连接生产库；
+2. 备份后删除或重置 `AdminUser`（仅紧急情况）；
+3. 设置新的 `ADMIN_INITIAL_PASSWORD` 后重启服务，仅在无管理员时会重建；
+4. 或直接更新 `passwordHash`（bcrypt）后登录再改密。
+
+### 12.5 Render 需新增环境变量
+
+- `ADMIN_INITIAL_USERNAME`
+- `ADMIN_INITIAL_PASSWORD`
+- `ADMIN_JWT_SECRET`
+- `ADMIN_SYSTEM_OPERATOR_TELEGRAM_ID`
+- `ADMIN_JWT_EXPIRES_IN`
+- `ADMIN_CORS_ORIGINS`
+- `APP_TIMEZONE`
+- `ENABLE_SWAGGER`（生产建议 `false`）
+
+部署前执行迁移：`pnpm prisma migrate deploy`（Docker/Render start 命令已包含）。
+
+---
+
+## 13. 项目结构（摘要）
 
 ```text
 src/
+  admin/           后台 API（认证、仪表盘、客户、待确认、日志）
   config/          环境变量与权限
   prisma/          PrismaService
-  counter/         原子编号（CUSTOMER_CODE / PENDING_CODE）
+  counter/         原子编号
   customer/        CustomerRegistryService 统一查重录入
   telegram/        Telegraf long polling 交互
 prisma/            schema 与迁移

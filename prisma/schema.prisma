@@ -131,3 +131,37 @@ model TelegramCustomerImportLog {
   @@index([operatorTelegramId, createdAt])
   @@index([source, result])
 }
+
+enum AdminUserStatus {
+  ACTIVE
+  DISABLED
+}
+
+model AdminUser {
+  id                String         @id @default(cuid())
+  username          String         @unique
+  passwordHash      String
+  displayName       String?
+  status            AdminUserStatus @default(ACTIVE)
+  lastLoginAt       DateTime?
+  passwordChangedAt DateTime?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  loginLogs         AdminLoginLog[]
+}
+
+model AdminLoginLog {
+  id            String     @id @default(cuid())
+  adminUserId   String?
+  adminUser     AdminUser? @relation(fields: [adminUserId], references: [id], onDelete: SetNull)
+  username      String?
+  success       Boolean
+  ipAddress     String?
+  userAgent     String?
+  failureReason String?
+  createdAt     DateTime   @default(now())
+
+  @@index([adminUserId, createdAt])
+  @@index([success, createdAt])
+  @@index([createdAt])
+}
