@@ -8,12 +8,14 @@ async function bootstrap() {
     logger: ['log', 'error', 'warn'],
   });
 
-  const bot = app.get(TelegramBotService);
-  await bot.start();
-
+  // 必须先监听 PORT，再启动 Long Polling。
+  // 否则 Telegram getMe/网络稍慢时，Render 端口扫描会超时（No open ports detected）。
   const port = process.env.PORT || 3000;
   await app.listen(port);
   Logger.log(`HTTP listening on ${port}`);
+
+  const bot = app.get(TelegramBotService);
+  await bot.start();
   Logger.log('Telegram Customer Registry Bot 已启动（long polling）', 'Bootstrap');
 
   const shutdown = async (signal: string) => {

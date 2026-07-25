@@ -1,0 +1,23 @@
+# Render Blueprint（可选；也可在 Dashboard 手动配置）
+services:
+  - type: web
+    name: telegram-customer-registry-bot
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: pnpm install && pnpm prisma generate && pnpm build
+    startCommand: pnpm prisma migrate deploy && node dist/main.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_OPERATOR_IDS
+        sync: false
+      - key: TELEGRAM_ENTRY_CHAT_IDS
+        sync: false
+      - key: TELEGRAM_ARCHIVE_CHAT_ID
+        sync: false

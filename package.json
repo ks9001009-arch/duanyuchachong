@@ -7,13 +7,15 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "nest build",
+    "build": "prisma generate && nest build",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
+    "render:build": "pnpm build",
+    "render:start": "pnpm prisma migrate deploy && node dist/main.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage"
@@ -24,6 +26,7 @@
     "@nestjs/core": "^11.1.6",
     "@nestjs/platform-express": "^11.1.6",
     "@prisma/client": "^6.14.0",
+    "prisma": "^6.14.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "telegraf": "^4.16.3"
@@ -35,7 +38,6 @@
     "@types/jest": "^30.0.0",
     "@types/node": "^22.17.2",
     "jest": "^30.0.5",
-    "prisma": "^6.14.0",
     "ts-jest": "^29.4.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.2"

@@ -5,6 +5,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { CounterModule } from './counter/counter.module';
 import { CustomerModule } from './customer/customer.module';
 import { TelegramModule } from './telegram/telegram.module';
+import { HealthController } from './health.controller';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { TelegramModule } from './telegram/telegram.module';
     CustomerModule,
     TelegramModule,
   ],
+  controllers: [HealthController],
   providers: [AppConfigService],
   exports: [AppConfigService],
 })
