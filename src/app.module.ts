@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
-import { AppConfigService } from './config/app-config.service';
+import { AppConfigModule } from './config/app-config.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { CounterModule } from './counter/counter.module';
 import { CustomerModule } from './customer/customer.module';
@@ -17,6 +17,7 @@ import { AdminExceptionFilter } from './admin/common/admin-exception.filter';
       isGlobal: true,
       envFilePath: ['.env'],
     }),
+    AppConfigModule,
     ThrottlerModule.forRoot([
       {
         ttl: 60_000,
@@ -31,7 +32,6 @@ import { AdminExceptionFilter } from './admin/common/admin-exception.filter';
   ],
   controllers: [HealthController],
   providers: [
-    AppConfigService,
     {
       provide: APP_FILTER,
       useClass: AdminExceptionFilter,
@@ -41,6 +41,5 @@ import { AdminExceptionFilter } from './admin/common/admin-exception.filter';
       useClass: ThrottlerGuard,
     },
   ],
-  exports: [AppConfigService],
 })
 export class AppModule {}

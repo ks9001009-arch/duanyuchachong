@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AppConfigService } from '../config/app-config.service';
+import { AppConfigModule } from '../config/app-config.module';
 import { CustomerModule } from '../customer/customer.module';
 import { AdminBootstrapService } from './bootstrap/admin-bootstrap.service';
 import { AuthController } from './auth/auth.controller';
@@ -19,8 +20,10 @@ import { AdminLogsService } from './logs/admin-logs.service';
 @Module({
   imports: [
     CustomerModule,
+    AppConfigModule,
     PassportModule.register({ defaultStrategy: 'admin-jwt' }),
     JwtModule.registerAsync({
+      imports: [AppConfigModule],
       inject: [AppConfigService],
       useFactory: (config: AppConfigService) => ({
         secret: config.adminJwtSecret,
@@ -45,7 +48,6 @@ import { AdminLogsService } from './logs/admin-logs.service';
     AdminCustomersService,
     AdminPendingService,
     AdminLogsService,
-    AppConfigService,
   ],
 })
 export class AdminModule {}
