@@ -1,5 +1,6 @@
 packages:
   - '.'
+  - 'admin-web'
 
 allowBuilds:
   '@prisma/client': true

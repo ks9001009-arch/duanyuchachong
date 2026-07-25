@@ -5,7 +5,8 @@ services:
     runtime: node
     plan: free
     region: oregon
-    buildCommand: pnpm install && pnpm prisma generate && pnpm build
+    # build = React 管理后台 + NestJS（见根 package.json scripts.build）
+    buildCommand: pnpm install --frozen-lockfile && pnpm build
     startCommand: pnpm prisma migrate deploy && node dist/main.js
     healthCheckPath: /health
     envVars:

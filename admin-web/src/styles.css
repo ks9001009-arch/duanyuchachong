@@ -1,0 +1,148 @@
+:root {
+  color: #1f1f1f;
+  background: #f5f7fa;
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+
+.app-boot-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5f7fa;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-sider {
+  position: sticky !important;
+  top: 0;
+  height: 100vh;
+}
+
+.sider-brand {
+  height: 56px;
+  margin: 12px 16px;
+  color: #fff;
+  font-weight: 600;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0.02em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.sider-logout {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 12px;
+  padding: 0 12px;
+}
+
+.sider-logout .ant-btn {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px !important;
+  border-bottom: 1px solid #e8e8e8;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.app-content {
+  margin: 16px;
+  padding: 20px;
+  background: #fff;
+  border: 1px solid #eef0f3;
+  border-radius: 8px;
+  min-height: calc(100vh - 96px);
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.filter-form {
+  margin-bottom: 16px;
+  row-gap: 12px;
+}
+
+.stat-card {
+  height: 100%;
+}
+
+.stat-card-value {
+  margin-top: 8px;
+  font-size: 28px;
+  font-weight: 650;
+  color: #16324f;
+  line-height: 1.2;
+}
+
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at top right, #d9e6f2 0, transparent 40%),
+    linear-gradient(180deg, #f7f9fc 0%, #eef2f6 100%);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 8px 28px rgba(22, 50, 79, 0.08);
+}
+
+.json-viewer {
+  margin: 0;
+  padding: 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 6px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+@media (max-width: 768px) {
+  .app-content {
+    margin: 8px;
+    padding: 12px;
+  }
+}

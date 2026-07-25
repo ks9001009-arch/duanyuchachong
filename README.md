@@ -1,8 +1,8 @@
 # Telegram Customer Registry Bot
 
-独立运行的 Telegram 客户查重录入机器人初版。
+独立运行的 Telegram 客户查重录入机器人，并附带中文 Web 管理后台（段誉客户数据管理后台）。
 
-技术栈：Node.js 22 · TypeScript · NestJS · Telegraf · Prisma · PostgreSQL · pnpm · Jest · Docker Compose
+技术栈：Node.js 22 · TypeScript · NestJS · Telegraf · Prisma · PostgreSQL · React · Vite · Ant Design · pnpm · Jest · Vitest · Docker Compose
 
 ---
 
@@ -191,17 +191,69 @@ docker compose exec -T db psql -U registry customer_registry < backup.sql
 ## 11. 测试与编译
 
 ```bash
+# 后端 Jest
 pnpm test
+
+# 前端 Vitest（admin-web）
+pnpm test:admin
+
+# 完整构建：React 管理后台 + Prisma generate + NestJS
 pnpm build
 ```
 
 ---
 
-## 12. 管理后台 API（当前阶段：仅后端）
+## 12. 管理后台（React + Admin API）
 
-后台与机器人共用同一 PostgreSQL。前端域名计划为 `duan-yu.com`（本阶段不部署 React）。
+后台与机器人、PostgreSQL 共用**同一个 NestJS / Render Web Service**。
 
-### 12.1 初始管理员
+生产访问根路径（如 `https://duan-yu.com/`）：
+
+- 未登录 → `/login`
+- 已登录 → `/dashboard`
+
+前端目录：`admin-web/`（Vite + React + TypeScript + Ant Design + TanStack Query）。
+
+### 12.0 本地前后端联调
+
+```bash
+# 终端 1：NestJS（API + Bot）
+pnpm dev:server
+# http://localhost:3000
+
+# 终端 2：Vite 管理后台
+pnpm dev:admin
+# http://localhost:5173
+```
+
+Vite 开发代理：
+
+- `/api` → `http://localhost:3000`
+- `/health` → `http://localhost:3000`
+
+生产环境前端只使用同源相对路径（`/api/admin/**`），不写死 Render 域名。
+
+构建产物由 NestJS `@nestjs/serve-static` 托管（`admin-web/dist`）。SPA 刷新回退 `index.html`，并**排除**：
+
+- `/api/**`（含 `/api/docs`）
+- `/health`
+
+常见问题：前端路由刷新 404 → 确认已执行 `pnpm build`（含 `build:admin`），且静态托管 exclude 未误伤业务路由。
+
+### 12.1 前端路由
+
+| 路径 | 说明 |
+|------|------|
+| `/login` | 登录 |
+| `/dashboard` | 数据概览 |
+| `/customers` | 客户列表 |
+| `/customers/:id` | 客户详情 |
+| `/pending-customers` | 待确认客户 |
+| `/import-logs` | 录入记录 |
+| `/admin-login-logs` | 管理员登录日志 |
+| `/settings` | 账号设置（改密） |
+
+### 12.2 初始管理员
 
 在 `.env` / Render 配置：
 
@@ -220,7 +272,7 @@ ENABLE_SWAGGER=true
 - **已存在管理员时不会覆盖密码**。
 - **禁止**把 `ADMIN_INITIAL_PASSWORD` / `ADMIN_JWT_SECRET` 提交到 Git。
 
-### 12.2 JWT 登录
+### 12.3 JWT 登录
 
 ```bash
 curl -X POST http://localhost:3000/api/admin/auth/login \
@@ -241,7 +293,7 @@ POST /api/admin/auth/change-password
 {"oldPassword":"...","newPassword":"至少8位"}
 ```
 
-### 12.3 API 列表
+### 12.4 API 列表
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
@@ -261,33 +313,42 @@ POST /api/admin/auth/change-password
 
 Swagger（非生产或 `ENABLE_SWAGGER=true`）：`/api/docs`
 
-### 12.4 管理员账号丢失恢复
+### 12.5 管理员账号丢失恢复
 
 1. 用有权限的数据库客户端连接生产库；
 2. 备份后删除或重置 `AdminUser`（仅紧急情况）；
 3. 设置新的 `ADMIN_INITIAL_PASSWORD` 后重启服务，仅在无管理员时会重建；
 4. 或直接更新 `passwordHash`（bcrypt）后登录再改密。
 
-### 12.5 Render 需新增环境变量
+### 12.6 Render 部署（单服务）
+
+`render.yaml`：
+
+- **buildCommand**: `pnpm install --frozen-lockfile && pnpm build`（含前端 + 后端）
+- **startCommand**: `pnpm prisma migrate deploy && node dist/main.js`
+
+需配置环境变量（Dashboard 填写真实值，勿写入仓库）：
 
 - `ADMIN_INITIAL_USERNAME`
 - `ADMIN_INITIAL_PASSWORD`
 - `ADMIN_JWT_SECRET`
 - `ADMIN_SYSTEM_OPERATOR_TELEGRAM_ID`
 - `ADMIN_JWT_EXPIRES_IN`
-- `ADMIN_CORS_ORIGINS`
+- `ADMIN_CORS_ORIGINS`（同源部署时可配置自有域名）
 - `APP_TIMEZONE`
 - `ENABLE_SWAGGER`（生产建议 `false`）
 
-部署前执行迁移：`pnpm prisma migrate deploy`（Docker/Render start 命令已包含）。
+同一服务同时提供：React 管理后台、`/api/admin/**`、`/health`、Telegram Bot、PostgreSQL 连接。
 
 ---
 
 ## 13. 项目结构（摘要）
 
 ```text
+admin-web/         React 管理后台（Vite）
 src/
   admin/           后台 API（认证、仪表盘、客户、待确认、日志）
+  admin-web-static.module.ts  静态托管 SPA
   config/          环境变量与权限
   prisma/          PrismaService
   counter/         原子编号

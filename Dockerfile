@@ -15,7 +15,8 @@ RUN pnpm prisma generate
 
 FROM deps AS build
 COPY . .
-RUN pnpm prisma generate
+# 安装 admin-web workspace 依赖后完整构建（React + Nest）
+RUN pnpm install --frozen-lockfile=false
 RUN pnpm build
 
 FROM base AS runner
@@ -23,6 +24,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/admin-web/dist ./admin-web/dist
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/pnpm-workspace.yaml ./pnpm-workspace.yaml

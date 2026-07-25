@@ -8,6 +8,7 @@ import { CounterModule } from './counter/counter.module';
 import { CustomerModule } from './customer/customer.module';
 import { TelegramModule } from './telegram/telegram.module';
 import { AdminModule } from './admin/admin.module';
+import { AdminWebStaticModule } from './admin-web-static.module';
 import { HealthController } from './health.controller';
 import { AdminExceptionFilter } from './admin/common/admin-exception.filter';
 
@@ -29,6 +30,8 @@ import { AdminExceptionFilter } from './admin/common/admin-exception.filter';
     CustomerModule,
     TelegramModule,
     AdminModule,
+    // 静态托管放在业务模块之后；exclude 已排除 /api 与 /health
+    AdminWebStaticModule,
   ],
   controllers: [HealthController],
   providers: [
