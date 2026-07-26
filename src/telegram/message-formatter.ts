@@ -260,15 +260,41 @@ export function formatHelpText(): string {
     '【群聊自动查重录入】',
     '4. 把机器人拉进群并设为管理员',
     '5. 群管理员发送：绑定数据群（或 /bind）',
-    '6. 之后直接发客户资料（含 @用户名 和/或 电话）即可自动查重录入',
-    '7. 收到回复后，请用接待号私聊机器人补充该客户 Telegram ID',
-    '8. 解绑发送：解绑数据群（或 /unbind）',
+    '6. 发送 @用户名：机器人会尝试解析 Telegram ID 并正式录入',
+    '7. 解析不到 ID 时：按用户名/电话软查重；未命中则录入待确认',
+    '8. 待确认客户请用接待号私聊补充 Telegram ID',
+    '9. 解绑发送：解绑数据群（或 /unbind）',
     '',
     '注意：',
     '- 正式客户以 Telegram ID 唯一查重（百分百）',
-    '- 群内按用户名/昵称/电话为辅助查重',
+    '- 仅公开用户名通常可被解析；无用户名/解析失败则进待确认',
     '- 已绑定群内任意成员发送即可',
   ].join('\n');
+}
+
+export function formatGroupImportResolvedReply(params: {
+  customer: TelegramCustomer;
+  profileUpdated: boolean;
+  created: boolean;
+  resolvedUsername: string;
+}): string {
+  const { customer, created, profileUpdated, resolvedUsername } = params;
+  return [
+    created ? '✅ 已通过用户名解析到 Telegram ID 并正式录入' : '⚠️ 该客户已存在（用户名已解析到 ID）',
+    '',
+    `解析用户名：@${resolvedUsername.replace(/^@+/, '')}`,
+    `客户编号：${customer.customerCode}`,
+    `Telegram ID：${customer.telegramId.toString()}`,
+    `用户名：${customer.username ? `@${customer.username}` : '无'}`,
+    `昵称：${customer.displayName ?? '无'}`,
+    `电话：${customer.phone ?? '无'}`,
+    profileUpdated && !created ? '本次：资料已更新' : null,
+    !created && !profileUpdated ? '本次：未重复写入' : null,
+    '',
+    `存档：${archiveLinkText(customer.archiveMessageLink, 'hint')}`,
+  ]
+    .filter((line) => line != null)
+    .join('\n');
 }
 
 export function formatGroupImportHitReply(params: {

@@ -32,6 +32,7 @@ import {
   formatDuplicateReply,
   formatGroupImportHitReply,
   formatGroupImportPendingReply,
+  formatGroupImportResolvedReply,
   formatHelpText,
   formatHiddenForwardReply,
   formatIdentifiedArchiveCard,
@@ -753,7 +754,46 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
+    const sourceChatId = ctx.chat ? BigInt(ctx.chat.id) : null;
+    const sourceMessageId =
+      ctx.message && 'message_id' in ctx.message
+        ? BigInt(ctx.message.message_id)
+        : null;
+    const operator = this.getOperator(ctx);
+
     try {
+      // 优先：用公开用户名向 Telegram 解析真实 ID，再按 ID 正式录入
+      const resolved = input.username
+        ? await this.resolveUserByUsername(input.username)
+        : null;
+
+      if (resolved) {
+        const outcome = await this.registry.checkAndImportIdentifiedCustomer({
+          profile: {
+            telegramId: resolved.telegramId,
+            username: resolved.username || input.username,
+            firstName: resolved.firstName,
+            lastName: resolved.lastName,
+            displayName: input.nickname,
+            phone: input.phone,
+          },
+          operator,
+          source: CustomerImportSource.MANUAL_ID,
+          sourceChatId,
+          sourceMessageId,
+        });
+        await ctx.reply(
+          formatGroupImportResolvedReply({
+            customer: outcome.customer,
+            created: outcome.kind === 'CREATED',
+            profileUpdated: outcome.profileUpdated,
+            resolvedUsername: input.username!,
+          }),
+          plainReplyExtra({ archiveLink: outcome.customer.archiveMessageLink }),
+        );
+        return;
+      }
+
       const matches = await this.registry.softDedupSearch({
         username: input.username,
         nickname: input.nickname,
@@ -761,7 +801,6 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       });
 
       if (matches.customers.length > 0 || matches.pendings.length > 0) {
-        // 命中正式客户时，用群消息里的新用户名/昵称/电话实时回写
         for (const customer of matches.customers) {
           try {
             await this.registry.syncObservedProfile({
@@ -792,19 +831,16 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       if (input.requirement?.trim()) {
         noteParts.push(`需求:${input.requirement.trim()}`);
       }
-
-      const sourceChatId = ctx.chat ? BigInt(ctx.chat.id) : null;
-      const sourceMessageId =
-        ctx.message && 'message_id' in ctx.message
-          ? BigInt(ctx.message.message_id)
-          : null;
+      if (input.username) {
+        noteParts.push('用户名解析ID失败:暂无公开可解析身份');
+      }
 
       const pending = await this.registry.createPendingCustomer({
         visibleName: input.nickname?.trim() || null,
         visibleUsername: input.username?.replace(/^@+/, '').trim() || null,
         note: noteParts.length > 0 ? noteParts.join('；') : null,
         failureReason: PendingFailureReason.MANUAL_PENDING,
-        operator: this.getOperator(ctx),
+        operator,
         sourceChatId,
         sourceMessageId,
         source: CustomerImportSource.MANUAL_ID,
@@ -821,6 +857,50 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       await ctx.reply(
         `❌ 查重录入失败：${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+
+  /**
+   * 通过公开用户名尝试解析 Telegram 用户 ID（Bot API getChat）。
+   * 仅对 private 用户生效；频道/群用户名或不可达时返回 null。
+   */
+  private async resolveUserByUsername(username: string): Promise<{
+    telegramId: bigint;
+    username?: string;
+    firstName?: string;
+    lastName?: string;
+  } | null> {
+    const normalized = username.replace(/^@+/, '').trim();
+    if (!normalized || !/^[A-Za-z0-9_]{4,}$/.test(normalized)) {
+      return null;
+    }
+    try {
+      const chat = await this.bot.telegram.getChat(`@${normalized}`);
+      if (chat.type !== 'private') {
+        return null;
+      }
+      const id = typeof chat.id === 'number' ? chat.id : Number(chat.id);
+      if (!Number.isFinite(id)) return null;
+      return {
+        telegramId: BigInt(id),
+        username:
+          'username' in chat && chat.username
+            ? String(chat.username)
+            : normalized,
+        firstName:
+          'first_name' in chat && chat.first_name
+            ? String(chat.first_name)
+            : undefined,
+        lastName:
+          'last_name' in chat && chat.last_name
+            ? String(chat.last_name)
+            : undefined,
+      };
+    } catch (error) {
+      this.logger.debug(
+        `用户名 @${normalized} 无法解析为 Telegram ID：${String(error)}`,
+      );
+      return null;
     }
   }
 
