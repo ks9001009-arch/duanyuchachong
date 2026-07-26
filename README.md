@@ -283,7 +283,7 @@ Vite 开发代理：
 | `/pending-customers` | 待确认客户 |
 | `/import-logs` | 录入记录 |
 | `/admin-login-logs` | 管理员登录日志 |
-| `/settings` | 账号设置（改密、客户清单/系统备份导出） |
+| `/settings` | 账号设置（改密、HTML 旧数据导入、备份导出） |
 
 ### 12.2 初始管理员
 
@@ -344,6 +344,7 @@ POST /api/admin/auth/change-password
 | GET | `/api/admin/export/backup` | 客户工作表 xlsx |
 | GET | `/api/admin/export/backup-txt` | 客户清单 TXT |
 | GET | `/api/admin/export/backup-json` | 全量 JSON 备份（不含密码哈希） |
+| POST | `/api/admin/import/telegram-html` | 上传 Telegram 导出 HTML，导入待确认客户 |
 | GET | `/health` | 健康检查 |
 
 Swagger（非生产或 `ENABLE_SWAGGER=true`）：`/api/docs`

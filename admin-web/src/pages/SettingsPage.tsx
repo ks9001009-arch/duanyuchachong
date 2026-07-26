@@ -9,12 +9,18 @@ import {
   Skeleton,
   Space,
   Typography,
+  Upload,
   message,
 } from 'antd';
-import { DownloadOutlined } from '@ant-design/icons';
+import { DownloadOutlined, InboxOutlined, UploadOutlined } from '@ant-design/icons';
+import type { UploadFile } from 'antd/es/upload/interface';
 import { useQuery } from '@tanstack/react-query';
 import { changePasswordApi, fetchMe } from '@/api/auth';
 import { downloadFullBackup, downloadJsonBackup } from '@/api/export';
+import {
+  importTelegramHtmlFiles,
+  type TelegramHtmlImportResult,
+} from '@/api/import';
 import { PageHeader } from '@/components/PageHeader';
 import { ErrorState } from '@/components/ErrorState';
 import { getErrorMessage } from '@/utils/errors';
@@ -25,6 +31,10 @@ export function SettingsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportingJson, setExportingJson] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [fileList, setFileList] = useState<UploadFile[]>([]);
+  const [importResult, setImportResult] =
+    useState<TelegramHtmlImportResult | null>(null);
 
   const query = useQuery({
     queryKey: ['auth', 'me'],
@@ -109,6 +119,32 @@ export function SettingsPage() {
     }
   };
 
+  const onImport = async () => {
+    if (importing) return;
+    const files: File[] = [];
+    for (const item of fileList) {
+      const raw = item.originFileObj;
+      if (raw) files.push(raw as File);
+    }
+    if (files.length === 0) {
+      message.warning('请先选择 messages*.html 文件');
+      return;
+    }
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const result = await importTelegramHtmlFiles(files);
+      setImportResult(result);
+      message.success(
+        `导入完成：新建 ${result.created}，跳过 ${result.skipped}，失败 ${result.failed}`,
+      );
+    } catch (err) {
+      message.error(getErrorMessage(err, '导入失败'));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader title="账号设置" />
@@ -126,6 +162,50 @@ export function SettingsPage() {
             {displayText(me.displayName)}
           </Descriptions.Item>
         </Descriptions>
+      </Card>
+
+      <Card title="导入旧数据（Telegram 导出 HTML）" style={{ marginBottom: 16 }}>
+        <Typography.Paragraph type="secondary">
+          上传 Telegram Desktop 导出的 messages.html / messages2.html …。将解析用户名与电话，拆条写入「待确认客户」（无官方
+          ID，不直接建正式客户）。已存在记录会自动跳过。
+        </Typography.Paragraph>
+        <Upload.Dragger
+          multiple
+          accept=".html,.htm"
+          fileList={fileList}
+          beforeUpload={() => false}
+          onChange={({ fileList: next }) => setFileList(next)}
+          disabled={importing}
+        >
+          <p className="ant-upload-drag-icon">
+            <InboxOutlined />
+          </p>
+          <p className="ant-upload-text">点击或拖拽 HTML 文件到此处</p>
+          <p className="ant-upload-hint">可多选，单文件建议不超过 20MB</p>
+        </Upload.Dragger>
+        <Space style={{ marginTop: 16 }} wrap>
+          <Button
+            type="primary"
+            icon={<UploadOutlined />}
+            loading={importing}
+            onClick={() => void onImport()}
+          >
+            开始导入
+          </Button>
+        </Space>
+        {importResult ? (
+          <Alert
+            style={{ marginTop: 16 }}
+            type="success"
+            showIcon
+            title={`文件 ${importResult.files} 个｜解析 ${importResult.parsed}｜新建 ${importResult.created}｜跳过 ${importResult.skipped}｜失败 ${importResult.failed}`}
+            description={
+              importResult.errors.length > 0
+                ? importResult.errors.slice(0, 8).join('\n')
+                : '可到「待确认客户」查看导入结果。'
+            }
+          />
+        ) : null}
       </Card>
 
       <Card title="数据备份" style={{ marginBottom: 16 }}>

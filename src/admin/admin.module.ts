@@ -18,6 +18,8 @@ import { AdminLogsController } from './logs/admin-logs.controller';
 import { AdminLogsService } from './logs/admin-logs.service';
 import { AdminExportController } from './export/admin-export.controller';
 import { AdminExportService } from './export/admin-export.service';
+import { AdminImportController } from './import/admin-import.controller';
+import { AdminImportService } from './import/admin-import.service';
 
 @Module({
   imports: [
@@ -42,6 +44,7 @@ import { AdminExportService } from './export/admin-export.service';
     AdminPendingController,
     AdminLogsController,
     AdminExportController,
+    AdminImportController,
   ],
   providers: [
     AdminBootstrapService,
@@ -52,6 +55,7 @@ import { AdminExportService } from './export/admin-export.service';
     AdminPendingService,
     AdminLogsService,
     AdminExportService,
+    AdminImportService,
   ],
 })
 export class AdminModule {}
