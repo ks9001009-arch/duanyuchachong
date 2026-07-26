@@ -26,8 +26,8 @@ cp .env.example .env
 | 变量 | 说明 |
 |------|------|
 | `TELEGRAM_BOT_TOKEN` | BotFather 下发的 Token（本项目专用，勿复用其他项目） |
-| `TELEGRAM_OPERATOR_IDS` | 授权接待员 Telegram ID，逗号分隔 |
-| `TELEGRAM_ENTRY_CHAT_IDS` | 授权录入群 ID，逗号分隔（私聊不需要） |
+| `TELEGRAM_OPERATOR_IDS` | 群聊授权接待员 Telegram ID，逗号分隔（**私聊已开放，不校验此名单**） |
+| `TELEGRAM_ENTRY_CHAT_IDS` | 授权录入群 ID，逗号分隔（私聊不需要；群聊还须搭配接待员名单） |
 | `TELEGRAM_ARCHIVE_CHAT_ID` | 统一客户存档群 ID |
 | `DATABASE_URL` | PostgreSQL 连接串 |
 | `ADMIN_INITIAL_USERNAME` | 初始管理员用户名（仅首次创建） |
@@ -40,9 +40,14 @@ cp .env.example .env
 
 ---
 
-## 3. 如何取得接待员 Telegram ID
+## 3. 权限说明与接待员 ID
 
-任选其一：
+- **私聊**：已完全开放，任何人私聊机器人即可录入 / 查询，**不需要**加入 `TELEGRAM_OPERATOR_IDS`。
+- **群聊**：仍须同时满足：
+  1. 操作者在 `TELEGRAM_OPERATOR_IDS`；
+  2. 群在 `TELEGRAM_ENTRY_CHAT_IDS`。
+
+取得接待员 Telegram ID（仅群聊白名单需要）任选其一：
 
 - 让接待员私聊 [@userinfobot](https://t.me/userinfobot) 或 [@getidsbot](https://t.me/getidsbot)
 - 把任意消息转发给 ID 查询机器人

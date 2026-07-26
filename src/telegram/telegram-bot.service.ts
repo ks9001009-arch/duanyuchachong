@@ -118,7 +118,7 @@ export class TelegramBotService implements OnModuleInit {
         [
           '↪️ 转发客户消息',
           '',
-          '请将客户消息转发给本机器人，或在授权录入群内转发。',
+          '请将客户消息转发给本机器人（私聊任意用户可用），或在授权录入群内由授权接待员转发。',
           '若客户隐藏了转发来源，将保存为待确认客户。',
         ].join('\n'),
         mainMenuKeyboard(),
@@ -686,21 +686,22 @@ export class TelegramBotService implements OnModuleInit {
   ): Promise<boolean> {
     if (!ctx.from) return false;
 
+    // 私聊完全开放：任意用户可录入 / 查询
+    if (!ctx.chat || ctx.chat.type === 'private') {
+      return true;
+    }
+
+    // 群聊仍需：接待员白名单 + 授权录入群
     const operatorId = BigInt(ctx.from.id);
     if (!this.config.isOperator(operatorId)) {
-      if (ctx.chat?.type === 'private') {
-        await ctx.reply('❌ 你没有权限使用本机器人。');
-      }
       return false;
     }
 
-    if (ctx.chat && ctx.chat.type !== 'private') {
-      if (!this.config.isEntryChat(BigInt(ctx.chat.id))) {
-        if (!options?.silentUnauthorizedChat) {
-          // 未授权群不主动回复
-        }
-        return false;
+    if (!this.config.isEntryChat(BigInt(ctx.chat.id))) {
+      if (!options?.silentUnauthorizedChat) {
+        // 未授权群不主动回复
       }
+      return false;
     }
 
     return true;
