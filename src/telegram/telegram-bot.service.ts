@@ -14,6 +14,7 @@ import {
   leadHasContent,
   normalizePhone,
   parseLeadText,
+  shouldAutoImportGroupText,
 } from '../customer/group-lead-parse';
 import { buildDisplayName, buildTelegramMessageLink, formatDateTime } from '../common/utils';
 import {
@@ -28,7 +29,6 @@ import {
   formatCreatedReply,
   formatCustomerQuery,
   formatDuplicateReply,
-  formatGroupDedupReply,
   formatGroupImportHitReply,
   formatGroupImportPendingReply,
   formatHelpText,
@@ -366,36 +366,32 @@ export class TelegramBotService implements OnModuleInit {
       );
     });
 
-    // 群聊查重并录入：/查重 /查 /find ， /录入 /记 /import
-    this.bot.hears(
-      /^\/(?:查重|查|find|dedup)(?:@\w+)?(?:\s|$)/iu,
-      async (ctx) => {
-        if (!(await this.ensureAuthorized(ctx))) return;
-        await this.handleGroupDedup(ctx);
-      },
-    );
-
-    this.bot.hears(
-      /^\/(?:录入|记|import|lead)(?:@\w+)?(?:\s|[\r\n]|$)/iu,
-      async (ctx) => {
-        if (!(await this.ensureAuthorized(ctx))) return;
-        await this.handleGroupImport(ctx);
-      },
-    );
-
+    // 群聊：成员直接发用户名/名字/电话 → 自动查重并录入（无专用命令）
     this.bot.on(message('users_shared'), async (ctx) => {
       if (!(await this.ensureAuthorized(ctx))) return;
       await this.handleUsersShared(ctx);
     });
 
     this.bot.on('message', async (ctx) => {
-      if (!ctx.message || !('forward_origin' in ctx.message) || !ctx.message.forward_origin) {
+      if (!ctx.message) return;
+
+      if ('forward_origin' in ctx.message && ctx.message.forward_origin) {
+        if (
+          !(await this.ensureAuthorized(ctx, { silentUnauthorizedChat: true }))
+        ) {
+          return;
+        }
+        await this.handleForward(ctx);
         return;
       }
+
+      if (!('text' in ctx.message) || !ctx.message.text) return;
+      // 仅授权群自动处理；私聊仍用菜单/命令做精准录入
+      if (!ctx.chat || ctx.chat.type === 'private') return;
       if (!(await this.ensureAuthorized(ctx, { silentUnauthorizedChat: true }))) {
         return;
       }
-      await this.handleForward(ctx);
+      await this.handleGroupAutoImport(ctx);
     });
   }
 
@@ -707,46 +703,19 @@ export class TelegramBotService implements OnModuleInit {
     );
   }
 
-  private async handleGroupDedup(ctx: Context) {
+  private async handleGroupAutoImport(ctx: Context) {
     const text =
       ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    const keyword = text
-      .replace(/^\/(?:查重|查|find|dedup)(?:@\w+)?\s*/iu, '')
-      .trim();
-    if (!keyword) {
-      await ctx.reply('用法：/查重 关键词（用户名、昵称或电话）');
-      return;
-    }
-    const matches = await this.registry.softDedupSearch({ keyword });
-    await ctx.reply(
-      formatGroupDedupReply({
-        keyword,
-        customers: matches.customers,
-        pendings: matches.pendings,
-      }),
-    );
-  }
+    if (!text?.trim()) return;
 
-  private async handleGroupImport(ctx: Context) {
-    const text =
-      ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    const input = parseLeadText(
-      text.replace(/^\/(?:录入|记|import|lead)/iu, '/记'),
-    );
-    if (!leadHasContent(input)) {
-      await ctx.reply(
-        [
-          '群聊查重并录入用法：',
-          '/录入',
-          '用户名: @xxx',
-          '昵称: 张三',
-          '电话: 09xxxxxxxx',
-          '需求: 客户要什么',
-          '',
-          '流程：先按用户名/昵称/电话查重 → 已存在则提示 → 不存在则写入待确认，再补 Telegram ID。',
-          '精准录入请用菜单「选择客户」或转发消息。',
-        ].join('\n'),
-      );
+    // 跳过命令、菜单按钮文案
+    if (text.trim().startsWith('/')) return;
+    const menuValues = new Set<string>(Object.values(MENU));
+    if (menuValues.has(text.trim())) return;
+    if (text.includes('返回菜单')) return;
+
+    const input = parseLeadText(text);
+    if (!shouldAutoImportGroupText(input) || !leadHasContent(input)) {
       return;
     }
 
@@ -797,8 +766,11 @@ export class TelegramBotService implements OnModuleInit {
         plainReplyExtra({ archiveLink: pending.archiveMessageLink }),
       );
     } catch (error) {
+      this.logger.warn(
+        `群自动查重录入失败：${error instanceof Error ? error.message : String(error)}`,
+      );
       await ctx.reply(
-        `❌ 录入失败：${error instanceof Error ? error.message : String(error)}`,
+        `❌ 查重录入失败：${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }

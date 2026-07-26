@@ -19,11 +19,13 @@ export function normalizePhone(phone?: string | null): string | null {
 }
 
 /**
- * 解析 /记 正文（多行键值或宽松单行）。
- * 支持：用户名/username、昵称/nickname/姓名、电话/手机/phone、需求/备注/requirement
+ * 解析群内客户资料文本（多行键值或宽松单行）。
+ * 支持：用户名/username、昵称/nickname/姓名、电话/手机/phone、需求/备注
  */
 export function parseLeadText(raw: string): ParsedLeadInput {
-  const text = raw.replace(/^\s*\/记(@\w+)?\s*/u, '').trim();
+  const text = raw
+    .replace(/^\s*\/(?:记|录入|import|lead|查重|查)(@\w+)?\s*/iu, '')
+    .trim();
   if (!text) return {};
 
   const result: ParsedLeadInput = {};
@@ -86,9 +88,7 @@ export function parseLeadText(raw: string): ParsedLeadInput {
     result.username = atMatch[1];
   }
 
-  const phoneMatch = text.match(
-    /(\+?\d[\d\s\-()]{5,}\d)/,
-  );
+  const phoneMatch = text.match(/(\+?\d[\d\s\-()]{5,}\d)/);
   if (phoneMatch) {
     result.phone = phoneMatch[1];
   }
@@ -98,7 +98,6 @@ export function parseLeadText(raw: string): ParsedLeadInput {
   if (phoneMatch) rest = rest.replace(phoneMatch[0], ' ');
   rest = rest.replace(/\s+/g, ' ').trim();
   if (rest) {
-    // 若只有一段短文本当昵称，较长当需求
     if (rest.length <= 40 && !result.nickname) {
       result.nickname = rest;
     } else {
@@ -117,3 +116,16 @@ export function leadHasContent(input: ParsedLeadInput): boolean {
       (input.requirement && input.requirement.trim()),
   );
 }
+
+/**
+ * 群内自动查重录入触发条件：至少有用户名或电话，
+ * 避免把普通闲聊当成客户资料。
+ */
+export function shouldAutoImportGroupText(input: ParsedLeadInput): boolean {
+  return Boolean(
+    normalizeUsername(input.username) || normalizePhone(input.phone),
+  );
+}
+
+export const GROUP_ID_UPLOAD_REMINDER =
+  '为避免客户修改信息，请打开接待号私聊机器人上传该用户记录ID数据';

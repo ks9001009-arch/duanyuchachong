@@ -2,6 +2,8 @@ import {
   leadHasContent,
   normalizePhone,
   parseLeadText,
+  shouldAutoImportGroupText,
+  GROUP_ID_UPLOAD_REMINDER,
 } from '../src/customer/group-lead-parse';
 
 describe('group-lead-parse', () => {
@@ -13,7 +15,7 @@ describe('group-lead-parse', () => {
 
   it('解析多行键值', () => {
     const parsed = parseLeadText(
-      ['/记', '用户名: @demo_user', '昵称: 张三', '电话: 0912345678', '需求: 要货到仰光'].join(
+      ['用户名: @demo_user', '昵称: 张三', '电话: 0912345678', '需求: 要货到仰光'].join(
         '\n',
       ),
     );
@@ -22,16 +24,24 @@ describe('group-lead-parse', () => {
     expect(parsed.phone).toBe('0912345678');
     expect(parsed.requirement).toBe('要货到仰光');
     expect(leadHasContent(parsed)).toBe(true);
+    expect(shouldAutoImportGroupText(parsed)).toBe(true);
   });
 
   it('宽松解析 @与电话', () => {
-    const parsed = parseLeadText('/记 @alex 0911222333 需要咨询');
+    const parsed = parseLeadText('@alex 0911222333 需要咨询');
     expect(parsed.username).toBe('alex');
     expect(parsed.phone).toContain('0911222333');
-    expect(leadHasContent(parsed)).toBe(true);
+    expect(shouldAutoImportGroupText(parsed)).toBe(true);
   });
 
-  it('空内容判定', () => {
-    expect(leadHasContent(parseLeadText('/记'))).toBe(false);
+  it('仅昵称不自动录入（避免闲聊误触发）', () => {
+    const parsed = parseLeadText('好的收到');
+    expect(shouldAutoImportGroupText(parsed)).toBe(false);
+  });
+
+  it('提醒文案固定', () => {
+    expect(GROUP_ID_UPLOAD_REMINDER).toContain(
+      '接待号私聊机器人上传该用户记录ID数据',
+    );
   });
 });
