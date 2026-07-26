@@ -36,6 +36,7 @@ import {
 } from './message-formatter';
 import { OperatorSessionStore } from './operator-session.store';
 import { plainReplyExtra } from './reply-options';
+import { isTelegramGetUpdatesConflict } from './telegram-errors';
 
 type SharedUser = {
   user_id: number;
@@ -66,8 +67,37 @@ export class TelegramBotService implements OnModuleInit {
   async start() {
     this.bot = new Telegraf(this.config.botToken);
     this.registerHandlers();
-    await this.bot.launch({ dropPendingUpdates: true });
-    this.logger.log('Telegraf long polling 已启动');
+
+    // 清掉可能残留的 webhook，避免与 long polling 冲突
+    try {
+      await this.bot.telegram.deleteWebhook({ drop_pending_updates: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`deleteWebhook 失败（可忽略）：${message}`);
+    }
+
+    const maxAttempts = 12;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await this.bot.launch({ dropPendingUpdates: true });
+        this.logger.log('Telegraf long polling 已启动');
+        return;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const conflict = isTelegramGetUpdatesConflict(message);
+
+        if (!conflict || attempt === maxAttempts) {
+          throw error;
+        }
+
+        // Render 滚动发布时旧实例可能尚未释放 getUpdates，退避重试
+        const delayMs = Math.min(1500 * attempt, 12_000);
+        this.logger.warn(
+          `Telegram getUpdates 冲突 (409)，${delayMs}ms 后重试 (${attempt}/${maxAttempts})：${message}`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
   }
 
   async stop() {

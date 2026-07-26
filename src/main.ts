@@ -71,8 +71,8 @@ async function bootstrap() {
   Logger.log(`HTTP listening on ${port}`);
 
   const bot = app.get(TelegramBotService);
-  await bot.start();
-  Logger.log('Telegram Customer Registry Bot 已启动（long polling）', 'Bootstrap');
+  // Bot 启动失败不拖垮 HTTP（健康检查 / 管理后台仍可用），后台持续重试
+  void startTelegramBotWithRetry(bot);
 
   const shutdown = async (signal: string) => {
     Logger.log(`收到 ${signal}，正在关闭...`, 'Bootstrap');
@@ -83,6 +83,27 @@ async function bootstrap() {
 
   process.once('SIGINT', () => void shutdown('SIGINT'));
   process.once('SIGTERM', () => void shutdown('SIGTERM'));
+}
+
+async function startTelegramBotWithRetry(bot: TelegramBotService): Promise<void> {
+  let attempt = 0;
+  for (;;) {
+    attempt += 1;
+    try {
+      await bot.start();
+      Logger.log('Telegram Customer Registry Bot 已启动（long polling）', 'Bootstrap');
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const delayMs = Math.min(3000 * attempt, 30_000);
+      Logger.error(
+        `Telegram Bot 启动失败（第 ${attempt} 次）：${message}；${delayMs}ms 后重试`,
+        undefined,
+        'Bootstrap',
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
 }
 
 bootstrap().catch((error: unknown) => {
