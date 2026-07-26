@@ -234,7 +234,7 @@ export class CustomerRegistryService {
       customerId: null,
       targetTelegramId: null,
       operator: input.operator,
-      source: CustomerImportSource.FORWARDED_MESSAGE,
+      source: input.source ?? CustomerImportSource.FORWARDED_MESSAGE,
       result: CustomerImportResult.PENDING_CREATED,
       sourceChatId: input.sourceChatId,
       sourceMessageId: input.sourceMessageId,
@@ -247,6 +247,96 @@ export class CustomerRegistryService {
     });
 
     return finalPending;
+  }
+
+  /**
+   * 群聊软查重：按用户名/昵称匹配正式客户与待确认（非 Telegram ID 精准）。
+   * 电话仅在待确认 note 中做包含匹配。
+   */
+  async softDedupSearch(input: {
+    username?: string | null;
+    nickname?: string | null;
+    phone?: string | null;
+    keyword?: string | null;
+  }) {
+    const usernameNormalized = normalizeUsername(input.username ?? undefined);
+    const nickname = input.nickname?.trim() || null;
+    const phone = input.phone?.replace(/\D/g, '') || null;
+    const keyword = input.keyword?.trim() || null;
+
+    const customerOr: Prisma.TelegramCustomerWhereInput[] = [];
+    if (usernameNormalized) {
+      customerOr.push({ usernameNormalized });
+      customerOr.push({ usernameNormalized: { startsWith: usernameNormalized } });
+    }
+    if (nickname) {
+      customerOr.push({
+        displayName: { contains: nickname, mode: 'insensitive' },
+      });
+    }
+    if (keyword) {
+      const kwUser = normalizeUsername(keyword);
+      if (kwUser) {
+        customerOr.push({ usernameNormalized: kwUser });
+        customerOr.push({
+          usernameNormalized: { startsWith: kwUser },
+        });
+      }
+      customerOr.push({
+        displayName: { contains: keyword.replace(/^@/, ''), mode: 'insensitive' },
+      });
+    }
+
+    const customers =
+      customerOr.length > 0
+        ? await this.prisma.telegramCustomer.findMany({
+            where: { OR: customerOr },
+            take: 15,
+            orderBy: { lastObservedAt: 'desc' },
+          })
+        : [];
+
+    const pendingOr: Prisma.PendingTelegramCustomerWhereInput[] = [];
+    if (usernameNormalized) {
+      pendingOr.push({
+        visibleUsername: { equals: usernameNormalized, mode: 'insensitive' },
+      });
+      pendingOr.push({
+        visibleUsername: { contains: usernameNormalized, mode: 'insensitive' },
+      });
+    }
+    if (nickname) {
+      pendingOr.push({
+        visibleName: { contains: nickname, mode: 'insensitive' },
+      });
+    }
+    if (phone && phone.length >= 6) {
+      pendingOr.push({ note: { contains: phone } });
+    }
+    if (keyword) {
+      const kw = keyword.replace(/^@/, '');
+      pendingOr.push({
+        visibleUsername: { contains: kw, mode: 'insensitive' },
+      });
+      pendingOr.push({
+        visibleName: { contains: kw, mode: 'insensitive' },
+      });
+      pendingOr.push({ note: { contains: kw } });
+    }
+
+    const pendings =
+      pendingOr.length > 0
+        ? await this.prisma.pendingTelegramCustomer.findMany({
+            where: {
+              status: PendingCustomerStatus.PENDING_ID,
+              OR: pendingOr,
+            },
+            take: 15,
+            orderBy: { createdAt: 'desc' },
+          })
+        : [];
+
+    return { customers, pendings };
   }
 
   async resolvePendingCustomer(

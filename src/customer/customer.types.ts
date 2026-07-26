@@ -46,6 +46,8 @@ export interface CreatePendingInput {
   operator: OperatorInfo;
   sourceChatId?: bigint | null;
   sourceMessageId?: bigint | null;
+  /** 导入日志来源，默认 FORWARDED_MESSAGE */
+  source?: CustomerImportSource;
 }
 
 export interface ResolvePendingInput {

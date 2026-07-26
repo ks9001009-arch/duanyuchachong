@@ -6,6 +6,6 @@ import { CounterModule } from '../counter/counter.module';
 @Module({
   imports: [CounterModule],
   providers: [CustomerRegistryService, GroupLeadService],
-  exports: [CustomerRegistryService, GroupLeadService],
+  exports: [CustomerRegistryService],
 })
 export class CustomerModule {}

@@ -7,12 +7,14 @@ import {
   PendingFailureReason,
   PendingTelegramCustomer,
   TelegramCustomer,
-  GroupLead,
 } from '@prisma/client';
 import { AppConfigService } from '../config/app-config.service';
 import { CustomerRegistryService } from '../customer/customer-registry.service';
-import { GroupLeadService } from '../customer/group-lead.service';
-import { leadHasContent, parseLeadText } from '../customer/group-lead-parse';
+import {
+  leadHasContent,
+  normalizePhone,
+  parseLeadText,
+} from '../customer/group-lead-parse';
 import { buildDisplayName, buildTelegramMessageLink, formatDateTime } from '../common/utils';
 import {
   batchUserPickerKeyboard,
@@ -26,12 +28,12 @@ import {
   formatCreatedReply,
   formatCustomerQuery,
   formatDuplicateReply,
+  formatGroupDedupReply,
+  formatGroupImportHitReply,
+  formatGroupImportPendingReply,
   formatHelpText,
   formatHiddenForwardReply,
   formatIdentifiedArchiveCard,
-  formatLeadArchiveCard,
-  formatLeadCreatedReply,
-  formatLeadSearchReply,
   formatMainMenuText,
   formatMergedReply,
   formatPendingArchiveCard,
@@ -60,7 +62,6 @@ export class TelegramBotService implements OnModuleInit {
   constructor(
     private readonly config: AppConfigService,
     private readonly registry: CustomerRegistryService,
-    private readonly groupLeads: GroupLeadService,
   ) {}
 
   onModuleInit() {
@@ -68,9 +69,6 @@ export class TelegramBotService implements OnModuleInit {
       sendIdentifiedArchive: (customer) => this.sendIdentifiedArchive(customer),
       sendPendingArchive: (pending) => this.sendPendingArchive(pending),
       replyPendingResolved: (params) => this.replyPendingResolved(params),
-    });
-    this.groupLeads.setArchiveSender({
-      sendLeadArchive: (lead) => this.sendLeadArchive(lead),
     });
   }
 
@@ -368,16 +366,22 @@ export class TelegramBotService implements OnModuleInit {
       );
     });
 
-    // 群线索：/记 /lead 、 /查 /find
-    this.bot.hears(/^\/(?:记|lead)(?:@\w+)?(?:\s|[\r\n]|$)/iu, async (ctx) => {
-      if (!(await this.ensureAuthorized(ctx))) return;
-      await this.handleLeadCreate(ctx);
-    });
+    // 群聊查重并录入：/查重 /查 /find ， /录入 /记 /import
+    this.bot.hears(
+      /^\/(?:查重|查|find|dedup)(?:@\w+)?(?:\s|$)/iu,
+      async (ctx) => {
+        if (!(await this.ensureAuthorized(ctx))) return;
+        await this.handleGroupDedup(ctx);
+      },
+    );
 
-    this.bot.hears(/^\/(?:查|find)(?:@\w+)?(?:\s|$)/iu, async (ctx) => {
-      if (!(await this.ensureAuthorized(ctx))) return;
-      await this.handleLeadSearch(ctx);
-    });
+    this.bot.hears(
+      /^\/(?:录入|记|import|lead)(?:@\w+)?(?:\s|[\r\n]|$)/iu,
+      async (ctx) => {
+        if (!(await this.ensureAuthorized(ctx))) return;
+        await this.handleGroupImport(ctx);
+      },
+    );
 
     this.bot.on(message('users_shared'), async (ctx) => {
       if (!(await this.ensureAuthorized(ctx))) return;
@@ -703,84 +707,100 @@ export class TelegramBotService implements OnModuleInit {
     );
   }
 
-  private async handleLeadCreate(ctx: Context) {
+  private async handleGroupDedup(ctx: Context) {
     const text =
       ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    const input = parseLeadText(text);
+    const keyword = text
+      .replace(/^\/(?:查重|查|find|dedup)(?:@\w+)?\s*/iu, '')
+      .trim();
+    if (!keyword) {
+      await ctx.reply('用法：/查重 关键词（用户名、昵称或电话）');
+      return;
+    }
+    const matches = await this.registry.softDedupSearch({ keyword });
+    await ctx.reply(
+      formatGroupDedupReply({
+        keyword,
+        customers: matches.customers,
+        pendings: matches.pendings,
+      }),
+    );
+  }
+
+  private async handleGroupImport(ctx: Context) {
+    const text =
+      ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+    const input = parseLeadText(
+      text.replace(/^\/(?:录入|记|import|lead)/iu, '/记'),
+    );
     if (!leadHasContent(input)) {
       await ctx.reply(
         [
-          '用法示例：',
-          '/记',
+          '群聊查重并录入用法：',
+          '/录入',
           '用户名: @xxx',
           '昵称: 张三',
           '电话: 09xxxxxxxx',
           '需求: 客户要什么',
           '',
-          '也支持：/记 @xxx 09xxxxxxxx 要货',
-          '至少填一项：用户名 / 昵称 / 电话 / 需求',
+          '流程：先按用户名/昵称/电话查重 → 已存在则提示 → 不存在则写入待确认，再补 Telegram ID。',
+          '精准录入请用菜单「选择客户」或转发消息。',
         ].join('\n'),
       );
       return;
     }
 
     try {
+      const matches = await this.registry.softDedupSearch({
+        username: input.username,
+        nickname: input.nickname,
+        phone: input.phone,
+      });
+
+      if (matches.customers.length > 0 || matches.pendings.length > 0) {
+        await ctx.reply(
+          formatGroupImportHitReply({
+            customers: matches.customers,
+            pendings: matches.pendings,
+          }),
+        );
+        return;
+      }
+
+      const noteParts: string[] = [];
+      const phone = normalizePhone(input.phone);
+      if (phone) noteParts.push(`电话:${phone}`);
+      if (input.phone && !phone) noteParts.push(`电话原文:${input.phone.trim()}`);
+      if (input.requirement?.trim()) {
+        noteParts.push(`需求:${input.requirement.trim()}`);
+      }
+
       const sourceChatId = ctx.chat ? BigInt(ctx.chat.id) : null;
       const sourceMessageId =
         ctx.message && 'message_id' in ctx.message
           ? BigInt(ctx.message.message_id)
           : null;
-      const { lead, softMatches } = await this.groupLeads.createLead({
-        input,
+
+      const pending = await this.registry.createPendingCustomer({
+        visibleName: input.nickname?.trim() || null,
+        visibleUsername: input.username?.replace(/^@+/, '').trim() || null,
+        note: noteParts.length > 0 ? noteParts.join('；') : null,
+        failureReason: PendingFailureReason.MANUAL_PENDING,
         operator: this.getOperator(ctx),
         sourceChatId,
         sourceMessageId,
+        source: CustomerImportSource.MANUAL_ID,
       });
+
       await ctx.reply(
-        formatLeadCreatedReply(lead, softMatches),
-        plainReplyExtra({ archiveLink: lead.archiveMessageLink }),
+        formatGroupImportPendingReply(pending),
+        plainReplyExtra({ archiveLink: pending.archiveMessageLink }),
       );
     } catch (error) {
       await ctx.reply(
-        `❌ 记录失败：${error instanceof Error ? error.message : String(error)}`,
+        `❌ 录入失败：${error instanceof Error ? error.message : String(error)}`,
       );
     }
-  }
-
-  private async handleLeadSearch(ctx: Context) {
-    const text =
-      ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    const keyword = text
-      .replace(/^\/(?:查|find)(?:@\w+)?\s*/iu, '')
-      .trim();
-    if (!keyword) {
-      await ctx.reply('用法：/查 关键词（用户名、昵称或电话）');
-      return;
-    }
-    const matches = await this.groupLeads.search(keyword);
-    await ctx.reply(formatLeadSearchReply(matches, keyword));
-  }
-
-  private async sendLeadArchive(lead: GroupLead) {
-    const chatId = this.config.archiveChatId;
-    const sent = await this.bot.telegram.sendMessage(
-      chatId.toString(),
-      formatLeadArchiveCard(lead),
-    );
-    const chat = await this.bot.telegram.getChat(chatId.toString());
-    const username =
-      chat && 'username' in chat ? (chat.username as string | undefined) : undefined;
-    const link = buildTelegramMessageLink({
-      chatId,
-      messageId: sent.message_id,
-      chatUsername: username,
-      chatType: chat.type,
-    });
-    return {
-      chatId,
-      messageId: BigInt(sent.message_id),
-      link,
-    };
   }
 
   private extractSharedUsers(shared: {

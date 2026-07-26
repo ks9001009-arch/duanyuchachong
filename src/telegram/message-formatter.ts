@@ -1,7 +1,6 @@
 import {
   PendingTelegramCustomer,
   TelegramCustomer,
-  GroupLead,
 } from '@prisma/client';
 import {
   archiveLinkText,
@@ -9,7 +8,6 @@ import {
   formatDateTime,
   sourceLabel,
 } from '../common/utils';
-import type { SoftMatchResult } from '../customer/group-lead.service';
 
 export function formatCreatedReply(
   customer: TelegramCustomer,
@@ -247,111 +245,114 @@ export function formatHelpText(): string {
   return [
     'ℹ️ 使用说明',
     '',
-    '【精准查重 · Telegram ID】',
-    '1. 选择客户查重 / 批量选择 / 转发消息',
+    '【精准查重录入 · Telegram ID】',
+    '1. 选择客户 / 批量选择 / 转发消息',
     '2. /id <TelegramID>  /pending <P编号>',
-    '3. /username <用户名>  /name <昵称>（仅辅助）',
-    '4. /resolve P000123 123456789',
+    '3. /resolve P000123 123456789',
     '',
-    '【群线索 · 软记录】',
-    '5. /记  — 记录用户名/昵称/电话/需求（可多行）',
-    '6. /查 <关键词> — 按用户名/昵称/电话软查询',
+    '【群聊查重并录入 · 用户名/昵称/电话】',
+    '4. /查重 <关键词> — 按用户名/昵称/电话查是否已有',
+    '5. /录入 — 先查重；已存在则提示；不存在则写入待确认（再补 ID）',
+    '',
+    '录入示例：',
+    '/录入',
+    '用户名: @xxx',
+    '昵称: 张三',
+    '电话: 09xxxxxxxx',
+    '需求: 要货备注',
     '',
     '注意：',
     '- 正式客户以 Telegram ID 唯一查重（百分百）',
-    '- 群线索按用户名/昵称/电话软匹配，可能误报，仅供参考',
-    '- 授权录入群内任意成员可用 /记 /查；未授权群不响应',
-    '- 私聊消息无法生成跨接待员通用链接',
+    '- 群内按用户名/昵称/电话为辅助查重，命中仅作提示',
+    '- 无 ID 时录入为待确认客户，请再用选择器或 /resolve 补 ID',
+    '- 授权录入群内任意成员可用',
   ].join('\n');
 }
 
-export function formatLeadCreatedReply(
-  lead: GroupLead,
-  softMatches: SoftMatchResult,
-): string {
-  const lines = [
-    '📝 群线索已记录',
-    '',
-    `线索编号：${lead.leadCode}`,
-    `用户名：${lead.username ? `@${lead.username}` : '无'}`,
-    `昵称：${lead.nickname ?? '无'}`,
-    `电话：${lead.phone ?? '无'}`,
-    `需求：${lead.requirement ?? '无'}`,
-    `录入员：${lead.operatorDisplayName ?? lead.operatorUsername ?? lead.operatorTelegramId.toString()}`,
-    `存档：${archiveLinkText(lead.archiveMessageLink, 'hint')}`,
-    '',
-    '说明：此为软记录，不是 Telegram ID 精准客户。',
-  ];
-
-  if (softMatches.customers.length > 0 || softMatches.leads.some((x) => x.id !== lead.id)) {
-    lines.push('', '⚠️ 疑似重复（非 ID 精准查重）：');
-    for (const c of softMatches.customers.slice(0, 5)) {
-      lines.push(
-        `- 正式客户 ${c.customerCode}｜${c.username ? `@${c.username}` : '无用户名'}｜${c.displayName ?? '无昵称'}`,
-      );
-    }
-    for (const l of softMatches.leads.filter((x) => x.id !== lead.id).slice(0, 5)) {
-      lines.push(
-        `- 线索 ${l.leadCode}｜${l.username ? `@${l.username}` : '无'}｜${l.nickname ?? '无'}｜${l.phone ?? '无电话'}`,
-      );
-    }
-  }
-
-  return lines.join('\n');
-}
-
-export function formatLeadSearchReply(matches: SoftMatchResult, keyword: string): string {
-  if (matches.customers.length === 0 && matches.leads.length === 0) {
+export function formatGroupDedupReply(params: {
+  keyword: string;
+  customers: TelegramCustomer[];
+  pendings: PendingTelegramCustomer[];
+}): string {
+  const { keyword, customers, pendings } = params;
+  if (customers.length === 0 && pendings.length === 0) {
     return [
-      '🔍 软查询无结果',
+      '🔍 查重结果：未找到',
       '',
       `关键词：${keyword}`,
       '',
-      '说明：按用户名/昵称/电话匹配，非 Telegram ID 精准查重。',
+      '可使用 /录入 写入待确认，或用「选择客户」做 Telegram ID 精准录入。',
+      '说明：此次为用户名/昵称/电话辅助查重，非 ID 精准匹配。',
     ].join('\n');
   }
 
   const lines = [
-    '🔍 软查询结果（疑似匹配，仅供参考）',
+    '⚠️ 查重结果：疑似已存在（辅助匹配）',
     '',
     `关键词：${keyword}`,
   ];
 
-  if (matches.customers.length > 0) {
+  if (customers.length > 0) {
     lines.push('', '正式客户：');
-    for (const c of matches.customers.slice(0, 8)) {
+    for (const c of customers.slice(0, 8)) {
       lines.push(
         `- ${c.customerCode}｜ID ${c.telegramId.toString()}｜${c.username ? `@${c.username}` : '无'}｜${c.displayName ?? '无'}`,
       );
     }
   }
 
-  if (matches.leads.length > 0) {
-    lines.push('', '群线索：');
-    for (const l of matches.leads.slice(0, 8)) {
+  if (pendings.length > 0) {
+    lines.push('', '待确认：');
+    for (const p of pendings.slice(0, 8)) {
       lines.push(
-        `- ${l.leadCode}｜${l.username ? `@${l.username}` : '无'}｜${l.nickname ?? '无'}｜${l.phone ?? '无电话'}｜${l.requirement ?? '无需求'}`,
+        `- ${p.pendingCode}｜${p.visibleUsername ? `@${p.visibleUsername}` : '无'}｜${p.visibleName ?? '无'}`,
       );
     }
   }
 
+  lines.push('', '说明：非 Telegram ID 精准查重，请人工核对。');
   return lines.join('\n');
 }
 
-export function formatLeadArchiveCard(lead: GroupLead): string {
-  return [
-    '📝 群线索存档',
+export function formatGroupImportHitReply(params: {
+  customers: TelegramCustomer[];
+  pendings: PendingTelegramCustomer[];
+}): string {
+  const lines = [
+    '⚠️ 查重命中：数据疑似已存在，未重复录入',
     '',
-    `线索编号：${lead.leadCode}`,
-    `用户名：${lead.username ? `@${lead.username}` : '无'}`,
-    `昵称：${lead.nickname ?? '无'}`,
-    `电话：${lead.phone ?? '无'}`,
-    `需求：${lead.requirement ?? '无'}`,
-    `录入员：${lead.operatorDisplayName ?? lead.operatorUsername ?? lead.operatorTelegramId.toString()}`,
-    `时间：${formatDateTime(lead.createdAt)}`,
-    lead.matchedCustomerId
-      ? `关联正式客户：${lead.matchedCustomerId}`
-      : '关联正式客户：无',
+    '说明：按用户名/昵称/电话辅助匹配（非 ID 精准）。',
+  ];
+  for (const c of params.customers.slice(0, 5)) {
+    lines.push(
+      `- 正式客户 ${c.customerCode}｜ID ${c.telegramId.toString()}｜${c.username ? `@${c.username}` : '无'}｜${c.displayName ?? '无'}`,
+    );
+  }
+  for (const p of params.pendings.slice(0, 5)) {
+    lines.push(
+      `- 待确认 ${p.pendingCode}｜${p.visibleUsername ? `@${p.visibleUsername}` : '无'}｜${p.visibleName ?? '无'}`,
+    );
+  }
+  lines.push('', '若确认是新人，请用「选择客户」做 Telegram ID 精准录入。');
+  return lines.join('\n');
+}
+
+export function formatGroupImportPendingReply(
+  pending: PendingTelegramCustomer,
+): string {
+  return [
+    '✅ 查重未命中，已录入为待确认客户',
+    '',
+    `临时编号：${pending.pendingCode}`,
+    `用户名：${pending.visibleUsername ? `@${pending.visibleUsername}` : '无'}`,
+    `昵称：${pending.visibleName ?? '无'}`,
+    `备注：${pending.note ?? '无'}`,
+    '',
+    '下一步：用「选择客户」或',
+    `/resolve_select ${pending.pendingCode}`,
+    '补充 Telegram ID，转为正式客户（ID 精准查重）。',
+    '',
+    `存档：${archiveLinkText(pending.archiveMessageLink, 'hint')}`,
   ].join('\n');
 }
 
@@ -360,6 +361,6 @@ export function formatMainMenuText(): string {
     '📋 Telegram 客户查重录入',
     '',
     '请选择操作：',
-    '（群内也可用 /记 /查 记录用户名·昵称·电话·需求）',
+    '群内也可用 /查重 、 /录入（用户名/昵称/电话）',
   ].join('\n');
 }
