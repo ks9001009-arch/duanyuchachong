@@ -128,6 +128,12 @@ export function CustomersPage() {
       ),
     },
     {
+      title: '电话',
+      dataIndex: 'phone',
+      width: 130,
+      render: (v: string | null) => displayText(v),
+    },
+    {
       title: '状态',
       dataIndex: 'status',
       width: 100,

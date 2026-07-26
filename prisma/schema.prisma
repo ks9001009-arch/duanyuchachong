@@ -60,6 +60,9 @@ model TelegramCustomer {
   firstName             String?
   lastName              String?
   displayName           String?
+  /// 绑定电话（来自群录入/人工补充；Telegram API 通常无法主动拉取）
+  phone                 String?
+  phoneNormalized       String?
   status                TelegramCustomerStatus  @default(IDENTIFIED)
   firstImportedById     BigInt
   firstImportedUsername String?
@@ -78,7 +81,9 @@ model TelegramCustomer {
 
   @@index([usernameNormalized])
   @@index([displayName])
+  @@index([phoneNormalized])
   @@index([firstImportedAt])
+  @@index([lastObservedAt])
 }
 
 model PendingTelegramCustomer {

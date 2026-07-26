@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Telegraf, Context } from 'telegraf';
 import { message } from 'telegraf/filters';
 import {
@@ -54,10 +54,12 @@ type SharedUser = {
 };
 
 @Injectable()
-export class TelegramBotService implements OnModuleInit {
+export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TelegramBotService.name);
   private bot!: Telegraf<Context>;
   private readonly sessions = new OperatorSessionStore();
+  private profileSyncTimer: ReturnType<typeof setInterval> | null = null;
+  private profileSyncRunning = false;
 
   constructor(
     private readonly config: AppConfigService,
@@ -89,6 +91,7 @@ export class TelegramBotService implements OnModuleInit {
       try {
         await this.bot.launch({ dropPendingUpdates: true });
         this.logger.log('Telegraf long polling 已启动');
+        this.startProfileSyncLoop();
         return;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -109,9 +112,14 @@ export class TelegramBotService implements OnModuleInit {
   }
 
   async stop() {
+    this.stopProfileSyncLoop();
     if (this.bot) {
       this.bot.stop('shutdown');
     }
+  }
+
+  onModuleDestroy() {
+    this.stopProfileSyncLoop();
   }
 
   private registerHandlers() {
@@ -374,6 +382,9 @@ export class TelegramBotService implements OnModuleInit {
 
     this.bot.on('message', async (ctx) => {
       if (!ctx.message) return;
+
+      // 凡是消息里出现的用户，若已是正式客户则静默同步昵称/用户名
+      await this.observeMessageActors(ctx);
 
       if ('forward_origin' in ctx.message && ctx.message.forward_origin) {
         if (
@@ -727,6 +738,21 @@ export class TelegramBotService implements OnModuleInit {
       });
 
       if (matches.customers.length > 0 || matches.pendings.length > 0) {
+        // 命中正式客户时，用群消息里的新用户名/昵称/电话实时回写
+        for (const customer of matches.customers) {
+          try {
+            await this.registry.syncObservedProfile({
+              telegramId: customer.telegramId,
+              username: input.username,
+              displayName: input.nickname,
+              phone: input.phone,
+            });
+          } catch (error) {
+            this.logger.warn(
+              `群命中后资料同步失败 ${customer.telegramId.toString()}: ${String(error)}`,
+            );
+          }
+        }
         await ctx.reply(
           formatGroupImportHitReply({
             customers: matches.customers,
@@ -772,6 +798,157 @@ export class TelegramBotService implements OnModuleInit {
       await ctx.reply(
         `❌ 查重录入失败：${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+
+  private async observeMessageActors(ctx: Context) {
+    const candidates: Array<{
+      telegramId: bigint;
+      username?: string | null;
+      firstName?: string | null;
+      lastName?: string | null;
+    }> = [];
+
+    if (ctx.from) {
+      candidates.push({
+        telegramId: BigInt(ctx.from.id),
+        username: ctx.from.username,
+        firstName: ctx.from.first_name,
+        lastName: ctx.from.last_name,
+      });
+    }
+
+    const msg = ctx.message as
+      | (Context['message'] & {
+          forward_origin?: {
+            type: string;
+            sender_user?: {
+              id: number;
+              username?: string;
+              first_name?: string;
+              last_name?: string;
+            };
+          };
+          users_shared?: {
+            users?: SharedUser[];
+          };
+        })
+      | undefined;
+
+    if (msg?.forward_origin?.type === 'user' && msg.forward_origin.sender_user) {
+      const u = msg.forward_origin.sender_user;
+      candidates.push({
+        telegramId: BigInt(u.id),
+        username: u.username,
+        firstName: u.first_name,
+        lastName: u.last_name,
+      });
+    }
+
+    if (msg?.users_shared?.users) {
+      for (const u of msg.users_shared.users) {
+        candidates.push({
+          telegramId: BigInt(u.user_id),
+          username: u.username,
+          firstName: u.first_name,
+          lastName: u.last_name,
+        });
+      }
+    }
+
+    for (const profile of candidates) {
+      try {
+        await this.registry.syncObservedProfile(profile, {
+          allowClearUsername: true,
+        });
+      } catch (error) {
+        this.logger.debug(
+          `观察同步跳过 ${profile.telegramId.toString()}: ${String(error)}`,
+        );
+      }
+    }
+  }
+
+  private startProfileSyncLoop() {
+    this.stopProfileSyncLoop();
+    // 启动后稍晚扫一轮，之后每 10 分钟扫最久未观察的一批
+    setTimeout(() => void this.runProfileSyncSweep(), 45_000);
+    this.profileSyncTimer = setInterval(
+      () => void this.runProfileSyncSweep(),
+      10 * 60 * 1000,
+    );
+    this.logger.log('客户资料定时扫描已启动（每 10 分钟）');
+  }
+
+  private stopProfileSyncLoop() {
+    if (this.profileSyncTimer) {
+      clearInterval(this.profileSyncTimer);
+      this.profileSyncTimer = null;
+    }
+  }
+
+  /**
+   * 对库内 Telegram ID 调用 getChat，刷新用户名/昵称。
+   * 电话无法由 Bot API 主动拉取，仅在群录入/人工补充时更新。
+   */
+  private async runProfileSyncSweep() {
+    if (!this.bot || this.profileSyncRunning) return;
+    this.profileSyncRunning = true;
+    let scanned = 0;
+    let updated = 0;
+    let failed = 0;
+    try {
+      const batch = await this.registry.listCustomersForSync(150);
+      for (const row of batch) {
+        scanned += 1;
+        try {
+          const chat = await this.bot.telegram.getChat(row.telegramId.toString());
+          const username =
+            chat && 'username' in chat
+              ? ((chat.username as string | undefined) ?? null)
+              : null;
+          const firstName =
+            chat && 'first_name' in chat
+              ? ((chat.first_name as string | undefined) ?? null)
+              : null;
+          const lastName =
+            chat && 'last_name' in chat
+              ? ((chat.last_name as string | undefined) ?? null)
+              : null;
+
+          const result = await this.registry.syncObservedProfile(
+            {
+              telegramId: row.telegramId,
+              username,
+              firstName,
+              lastName,
+            },
+            { allowClearUsername: true },
+          );
+          if (result.updated) updated += 1;
+        } catch {
+          // 用户未与机器人互动 / 隐私限制 / 已注销等，跳过
+          failed += 1;
+          // 仍刷新 lastObservedAt，避免反复卡在同一批失败 ID
+          try {
+            await this.registry.syncObservedProfile({
+              telegramId: row.telegramId,
+            });
+          } catch {
+            // ignore
+          }
+        }
+        await new Promise((r) => setTimeout(r, 80));
+      }
+      this.logger.log(
+        `客户资料扫描完成：扫描 ${scanned}，更新 ${updated}，不可达 ${failed}`,
+      );
+    } catch (error) {
+      this.logger.warn(
+        `客户资料扫描异常：${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      this.profileSyncRunning = false;
     }
   }
 

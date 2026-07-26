@@ -16,6 +16,10 @@ export interface IdentifiedProfileInput {
   username?: string | null;
   firstName?: string | null;
   lastName?: string | null;
+  /** 直接覆盖展示昵称（群软更新等场景） */
+  displayName?: string | null;
+  /** 绑定电话 */
+  phone?: string | null;
 }
 
 export interface CheckAndImportInput {

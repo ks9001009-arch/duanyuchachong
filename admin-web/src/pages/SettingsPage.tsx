@@ -7,10 +7,14 @@ import {
   Form,
   Input,
   Skeleton,
+  Space,
+  Typography,
   message,
 } from 'antd';
+import { DownloadOutlined } from '@ant-design/icons';
 import { useQuery } from '@tanstack/react-query';
 import { changePasswordApi, fetchMe } from '@/api/auth';
+import { downloadFullBackup, downloadJsonBackup } from '@/api/export';
 import { PageHeader } from '@/components/PageHeader';
 import { ErrorState } from '@/components/ErrorState';
 import { getErrorMessage } from '@/utils/errors';
@@ -19,6 +23,8 @@ import { displayText } from '@/utils/format';
 export function SettingsPage() {
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportingJson, setExportingJson] = useState(false);
 
   const query = useQuery({
     queryKey: ['auth', 'me'],
@@ -77,6 +83,32 @@ export function SettingsPage() {
     }
   };
 
+  const onExport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await downloadFullBackup();
+      message.success('客户工作表（xlsx）已开始下载');
+    } catch (err) {
+      message.error(getErrorMessage(err, '导出失败，请稍后重试'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const onExportJson = async () => {
+    if (exportingJson) return;
+    setExportingJson(true);
+    try {
+      await downloadJsonBackup();
+      message.success('系统 JSON 备份已开始下载');
+    } catch (err) {
+      message.error(getErrorMessage(err, '导出失败，请稍后重试'));
+    } finally {
+      setExportingJson(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader title="账号设置" />
@@ -94,6 +126,25 @@ export function SettingsPage() {
             {displayText(me.displayName)}
           </Descriptions.Item>
         </Descriptions>
+      </Card>
+
+      <Card title="数据备份" style={{ marginBottom: 16 }}>
+        <Typography.Paragraph type="secondary">
+          导出本地工作表（xlsx）列：电报昵称 / 电报用户名 / 绑定号码 / 电报ID。无用户名时写入「【用户未设置电报用户名】」。机器人会持续扫描并更新昵称与用户名；电话仅在有录入时写入。
+        </Typography.Paragraph>
+        <Space wrap>
+          <Button
+            type="primary"
+            icon={<DownloadOutlined />}
+            loading={exporting}
+            onClick={() => void onExport()}
+          >
+            导出客户工作表
+          </Button>
+          <Button loading={exportingJson} onClick={() => void onExportJson()}>
+            导出系统 JSON 备份
+          </Button>
+        </Space>
       </Card>
 
       <Card title="修改密码">

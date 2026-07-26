@@ -283,7 +283,7 @@ Vite 开发代理：
 | `/pending-customers` | 待确认客户 |
 | `/import-logs` | 录入记录 |
 | `/admin-login-logs` | 管理员登录日志 |
-| `/settings` | 账号设置（改密） |
+| `/settings` | 账号设置（改密、客户清单/系统备份导出） |
 
 ### 12.2 初始管理员
 
@@ -341,6 +341,9 @@ POST /api/admin/auth/change-password
 | POST | `/api/admin/pending-customers/:id/resolve` | 后台补充身份 |
 | GET | `/api/admin/import-logs` | 录入日志 |
 | GET | `/api/admin/admin-login-logs` | 管理员登录日志 |
+| GET | `/api/admin/export/backup` | 客户工作表 xlsx |
+| GET | `/api/admin/export/backup-txt` | 客户清单 TXT |
+| GET | `/api/admin/export/backup-json` | 全量 JSON 备份（不含密码哈希） |
 | GET | `/health` | 健康检查 |
 
 Swagger（非生产或 `ENABLE_SWAGGER=true`）：`/api/docs`
