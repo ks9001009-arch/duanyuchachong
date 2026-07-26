@@ -51,6 +51,21 @@ model SystemCounter {
   updatedAt DateTime @updatedAt
 }
 
+/// 群内命令「绑定数据群」激活的录入群（持久化，重启不丢失）
+model BoundEntryChat {
+  chatId              BigInt   @id
+  title               String?
+  boundByTelegramId   BigInt
+  boundByUsername     String?
+  boundByDisplayName  String?
+  active              Boolean  @default(true)
+  boundAt             DateTime @default(now())
+  unboundAt           DateTime?
+  updatedAt           DateTime @updatedAt
+
+  @@index([active])
+}
+
 model TelegramCustomer {
   id                    String                  @id @default(cuid())
   customerCode          String                  @unique

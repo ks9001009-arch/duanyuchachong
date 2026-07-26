@@ -26,8 +26,8 @@ cp .env.example .env
 | 变量 | 说明 |
 |------|------|
 | `TELEGRAM_BOT_TOKEN` | BotFather 下发的 Token（本项目专用，勿复用其他项目） |
-| `TELEGRAM_OPERATOR_IDS` | 可选；历史接待员名单（当前群权限不再依赖） |
-| `TELEGRAM_ENTRY_CHAT_IDS` | 授权录入群 ID，逗号分隔；群内任意成员可用 |
+| `TELEGRAM_OPERATOR_IDS` | 可选；名单内接待员可在群内执行绑定/解绑（群管理员也可） |
+| `TELEGRAM_ENTRY_CHAT_IDS` | 可选；额外写死的授权群 ID。也可用群内「绑定数据群」动态激活 |
 | `TELEGRAM_ARCHIVE_CHAT_ID` | 统一客户存档群 ID |
 | `DATABASE_URL` | PostgreSQL 连接串 |
 | `ADMIN_INITIAL_USERNAME` | 初始管理员用户名（仅首次创建） |
@@ -40,21 +40,20 @@ cp .env.example .env
 
 ---
 
-## 3. 权限说明与接待员 ID
+## 3. 权限说明与群绑定
 
 - **私聊**：已完全开放，任何人私聊机器人即可使用。
-- **授权录入群**（`TELEGRAM_ENTRY_CHAT_IDS`）：群内**任意成员**直接发用户名/电话即可自动查重录入。
-- **未授权群**：机器人不响应。
-- `TELEGRAM_OPERATOR_IDS`：历史接待员名单，当前群聊权限**不再依赖**此变量（可保留备查）。
-
-取得群 ID（配置 `TELEGRAM_ENTRY_CHAT_IDS` / `TELEGRAM_ARCHIVE_CHAT_ID`）任选其一：
-
-- 把机器人拉进群后，用 `@getidsbot` 等查看群 ID（通常形如 `-100xxxxxxxxxx`）
-- 临时在更新日志中查看 `chat.id`
+- **数据群**：群管理员（或 `TELEGRAM_OPERATOR_IDS` 接待员）在群内发送 **`绑定数据群`**（或 `/bind`）即可激活；之后任意成员可发客户资料自动查重录入。
+- **解绑**：发送 **`解绑数据群`**（或 `/unbind`）。
+- **未绑定群**：除绑定命令外不响应。
+- `TELEGRAM_ENTRY_CHAT_IDS`：可选环境变量白名单，与命令绑定并存。
 
 ### 群聊自动查重并录入
 
-授权群（`TELEGRAM_ENTRY_CHAT_IDS`）内，成员**直接发送**客户资料即可（无需命令），例如：
+1. 把机器人拉进群并设为管理员  
+2. BotFather 关闭 Group Privacy  
+3. 群管理员发送：`绑定数据群`  
+4. 成员直接发送客户资料，例如：
 
 ```text
 @someone
@@ -90,16 +89,17 @@ cp .env.example .env
 2. 将本机器人添加为群成员
 3. 建议赋予机器人发消息权限
 4. 取得群 ID（可用 `@getidsbot`，或看更新中的 `chat.id`，通常形如 `-100xxxxxxxxxx`）
-5. 填入 `TELEGRAM_ARCHIVE_CHAT_ID`（若该群也用于转发录入，同时加入 `TELEGRAM_ENTRY_CHAT_IDS`）
+5. 填入 `TELEGRAM_ARCHIVE_CHAT_ID`（若也要在该群自动查重录入，在群内发送「绑定数据群」即可）
 
 ---
 
 ## 5. 把机器人加入群并配置权限
 
-1. 群设置 → 添加成员 → 选择本机器人
-2. 如需机器人发送存档卡片：允许「发送消息」
-3. 如需在群内处理转发：建议关闭 Privacy Mode
-4. 未在 `TELEGRAM_ENTRY_CHAT_IDS` 中的群，机器人不会主动回复
+1. 群设置 → 添加成员 → 选择本机器人  
+2. 将机器人设为**管理员**（便于读取消息、回复）  
+3. BotFather → Group Privacy → **Turn off**  
+4. 群管理员在群内发送：`绑定数据群`（或 `/bind`）  
+5. 看到「已绑定为数据群」后，即可发 `@用户名` / 电话做查重录入
 
 ---
 

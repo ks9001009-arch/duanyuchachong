@@ -10,6 +10,7 @@ import {
 } from '@prisma/client';
 import { AppConfigService } from '../config/app-config.service';
 import { CustomerRegistryService } from '../customer/customer-registry.service';
+import { EntryChatService } from './entry-chat.service';
 import {
   leadHasContent,
   normalizePhone,
@@ -64,6 +65,7 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly config: AppConfigService,
     private readonly registry: CustomerRegistryService,
+    private readonly entryChats: EntryChatService,
   ) {}
 
   onModuleInit() {
@@ -123,6 +125,20 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   }
 
   private registerHandlers() {
+    // 群绑定：未绑定的群也要能收到（不走 ensureAuthorized 的录入群校验）
+    this.bot.hears(/^绑定数据群$/, async (ctx) => {
+      await this.handleBindEntryChat(ctx);
+    });
+    this.bot.command('bind', async (ctx) => {
+      await this.handleBindEntryChat(ctx);
+    });
+    this.bot.hears(/^解绑数据群$/, async (ctx) => {
+      await this.handleUnbindEntryChat(ctx);
+    });
+    this.bot.command('unbind', async (ctx) => {
+      await this.handleUnbindEntryChat(ctx);
+    });
+
     this.bot.start(async (ctx) => {
       if (!(await this.ensureAuthorized(ctx))) return;
       await ctx.reply(formatMainMenuText(), mainMenuKeyboard());
@@ -719,8 +735,15 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       ctx.message && 'text' in ctx.message ? ctx.message.text : '';
     if (!text?.trim()) return;
 
-    // 跳过命令、菜单按钮文案
+    // 跳过命令、菜单按钮文案、绑定口令（由独立 handler 处理）
     if (text.trim().startsWith('/')) return;
+    const bindPhrases = new Set([
+      '绑定数据群',
+      '解绑数据群',
+      '/bind',
+      '/unbind',
+    ]);
+    if (bindPhrases.has(text.trim())) return;
     const menuValues = new Set<string>(Object.values(MENU));
     if (menuValues.has(text.trim())) return;
     if (text.includes('返回菜单')) return;
@@ -798,6 +821,115 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       await ctx.reply(
         `❌ 查重录入失败：${error instanceof Error ? error.message : String(error)}`,
       );
+    }
+  }
+
+  private async handleBindEntryChat(ctx: Context) {
+    if (!ctx.chat || ctx.chat.type === 'private') {
+      await ctx.reply('请在需要录入的群里发送「绑定数据群」（或 /bind）。');
+      return;
+    }
+    if (!ctx.from) return;
+
+    const allowed = await this.canManageEntryBinding(ctx);
+    if (!allowed) {
+      await ctx.reply(
+        '❌ 仅群管理员或系统接待员可绑定数据群。请先将机器人设为管理员后再试。',
+      );
+      return;
+    }
+
+    const chatId = BigInt(ctx.chat.id);
+    const title =
+      'title' in ctx.chat ? (ctx.chat.title as string | undefined) : undefined;
+    const operator = this.getOperator(ctx);
+
+    try {
+      const existing = await this.entryChats.getBinding(chatId);
+      await this.entryChats.bind({
+        chatId,
+        title,
+        operatorTelegramId: operator.telegramId,
+        operatorUsername: operator.username,
+        operatorDisplayName: operator.displayName,
+      });
+
+      const wasActive = Boolean(existing?.active);
+      await ctx.reply(
+        [
+          wasActive ? '✅ 本群已是数据群（已刷新绑定）' : '✅ 已绑定为数据群',
+          '',
+          `群 ID：${chatId.toString()}`,
+          title ? `群名称：${title}` : null,
+          '',
+          '现在可在本群直接发送客户资料（含 @用户名 和/或 电话）：',
+          '机器人会自动查重；未命中则录入为待确认。',
+          '',
+          '解绑请发送：解绑数据群',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+      );
+    } catch (error) {
+      this.logger.warn(
+        `绑定数据群失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+      await ctx.reply(
+        `❌ 绑定失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async handleUnbindEntryChat(ctx: Context) {
+    if (!ctx.chat || ctx.chat.type === 'private') {
+      await ctx.reply('请在群里发送「解绑数据群」（或 /unbind）。');
+      return;
+    }
+    if (!ctx.from) return;
+
+    const allowed = await this.canManageEntryBinding(ctx);
+    if (!allowed) {
+      await ctx.reply('❌ 仅群管理员或系统接待员可解绑数据群。');
+      return;
+    }
+
+    const chatId = BigInt(ctx.chat.id);
+    try {
+      if (this.config.isEntryChat(chatId)) {
+        await ctx.reply(
+          [
+            '⚠️ 本群在服务器环境变量 TELEGRAM_ENTRY_CHAT_IDS 中，',
+            '命令解绑无法移除该项。请联系管理员改环境变量，或继续使用。',
+          ].join('\n'),
+        );
+        return;
+      }
+
+      const result = await this.entryChats.unbind(chatId);
+      if (result.kind === 'NOT_FOUND' || result.kind === 'ALREADY_INACTIVE') {
+        await ctx.reply('本群当前未绑定为数据群。');
+        return;
+      }
+      await ctx.reply('✅ 已解绑。本群将不再自动查重录入。重新绑定请发送：绑定数据群');
+    } catch (error) {
+      await ctx.reply(
+        `❌ 解绑失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  /** 群管理员 / 群主 / 环境变量接待员 可绑定 */
+  private async canManageEntryBinding(ctx: Context): Promise<boolean> {
+    if (!ctx.from || !ctx.chat) return false;
+    if (this.config.isOperator(ctx.from.id)) return true;
+    try {
+      const member = await ctx.getChatMember(ctx.from.id);
+      return member.status === 'creator' || member.status === 'administrator';
+    } catch (error) {
+      this.logger.warn(
+        `读取群成员身份失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+      return false;
     }
   }
 
@@ -991,10 +1123,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       return true;
     }
 
-    // 授权录入群：任意成员可用（含 /记 /查）
-    if (!this.config.isEntryChat(BigInt(ctx.chat.id))) {
+    // 授权录入群：环境变量白名单 或 命令「绑定数据群」激活的群
+    const chatId = BigInt(ctx.chat.id);
+    const allowed = await this.entryChats.isEntryChat(chatId);
+    if (!allowed) {
       if (!options?.silentUnauthorizedChat) {
-        // 未授权群不主动回复
+        // 未授权群不主动回复（绑定命令另有独立入口）
       }
       return false;
     }
