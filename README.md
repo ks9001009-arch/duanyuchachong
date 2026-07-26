@@ -26,8 +26,8 @@ cp .env.example .env
 | 变量 | 说明 |
 |------|------|
 | `TELEGRAM_BOT_TOKEN` | BotFather 下发的 Token（本项目专用，勿复用其他项目） |
-| `TELEGRAM_OPERATOR_IDS` | 群聊授权接待员 Telegram ID，逗号分隔（**私聊已开放，不校验此名单**） |
-| `TELEGRAM_ENTRY_CHAT_IDS` | 授权录入群 ID，逗号分隔（私聊不需要；群聊还须搭配接待员名单） |
+| `TELEGRAM_OPERATOR_IDS` | 可选；历史接待员名单（当前群权限不再依赖） |
+| `TELEGRAM_ENTRY_CHAT_IDS` | 授权录入群 ID，逗号分隔；群内任意成员可用 |
 | `TELEGRAM_ARCHIVE_CHAT_ID` | 统一客户存档群 ID |
 | `DATABASE_URL` | PostgreSQL 连接串 |
 | `ADMIN_INITIAL_USERNAME` | 初始管理员用户名（仅首次创建） |
@@ -42,18 +42,33 @@ cp .env.example .env
 
 ## 3. 权限说明与接待员 ID
 
-- **私聊**：已完全开放，任何人私聊机器人即可录入 / 查询，**不需要**加入 `TELEGRAM_OPERATOR_IDS`。
-- **群聊**：仍须同时满足：
-  1. 操作者在 `TELEGRAM_OPERATOR_IDS`；
-  2. 群在 `TELEGRAM_ENTRY_CHAT_IDS`。
+- **私聊**：已完全开放，任何人私聊机器人即可使用。
+- **授权录入群**（`TELEGRAM_ENTRY_CHAT_IDS`）：群内**任意成员**可用（含精准查重菜单、`/记` `/查`）。
+- **未授权群**：机器人不响应。
+- `TELEGRAM_OPERATOR_IDS`：历史接待员名单，当前群聊权限**不再依赖**此变量（可保留备查）。
 
-取得接待员 Telegram ID（仅群聊白名单需要）任选其一：
+取得群 ID（配置 `TELEGRAM_ENTRY_CHAT_IDS` / `TELEGRAM_ARCHIVE_CHAT_ID`）任选其一：
 
-- 让接待员私聊 [@userinfobot](https://t.me/userinfobot) 或 [@getidsbot](https://t.me/getidsbot)
-- 把任意消息转发给 ID 查询机器人
-- 临时在日志中打印 `message.from.id`
+- 把机器人拉进群后，用 `@getidsbot` 等查看群 ID（通常形如 `-100xxxxxxxxxx`）
+- 临时在更新日志中查看 `chat.id`
 
-把数字 ID 写入 `TELEGRAM_OPERATOR_IDS`。
+### 群线索命令（软记录）
+
+群里可贴用户名、昵称、电话、需求（**非** Telegram ID 百分百查重）：
+
+```text
+/记
+用户名: @xxx
+昵称: 张三
+电话: 09xxxxxxxx
+需求: 要货/地址/备注
+```
+
+或：`/记 @xxx 09xxxxxxxx 要货`
+
+查询：`/查 关键词`（也可用 `/lead`、`/find`）
+
+正式客户仍以 Telegram ID 精准查重；群线索命中仅提示「疑似重复」。
 
 ---
 

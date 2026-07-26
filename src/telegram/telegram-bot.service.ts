@@ -7,9 +7,12 @@ import {
   PendingFailureReason,
   PendingTelegramCustomer,
   TelegramCustomer,
+  GroupLead,
 } from '@prisma/client';
 import { AppConfigService } from '../config/app-config.service';
 import { CustomerRegistryService } from '../customer/customer-registry.service';
+import { GroupLeadService } from '../customer/group-lead.service';
+import { leadHasContent, parseLeadText } from '../customer/group-lead-parse';
 import { buildDisplayName, buildTelegramMessageLink, formatDateTime } from '../common/utils';
 import {
   batchUserPickerKeyboard,
@@ -26,6 +29,9 @@ import {
   formatHelpText,
   formatHiddenForwardReply,
   formatIdentifiedArchiveCard,
+  formatLeadArchiveCard,
+  formatLeadCreatedReply,
+  formatLeadSearchReply,
   formatMainMenuText,
   formatMergedReply,
   formatPendingArchiveCard,
@@ -54,6 +60,7 @@ export class TelegramBotService implements OnModuleInit {
   constructor(
     private readonly config: AppConfigService,
     private readonly registry: CustomerRegistryService,
+    private readonly groupLeads: GroupLeadService,
   ) {}
 
   onModuleInit() {
@@ -61,6 +68,9 @@ export class TelegramBotService implements OnModuleInit {
       sendIdentifiedArchive: (customer) => this.sendIdentifiedArchive(customer),
       sendPendingArchive: (pending) => this.sendPendingArchive(pending),
       replyPendingResolved: (params) => this.replyPendingResolved(params),
+    });
+    this.groupLeads.setArchiveSender({
+      sendLeadArchive: (lead) => this.sendLeadArchive(lead),
     });
   }
 
@@ -356,6 +366,17 @@ export class TelegramBotService implements OnModuleInit {
         `请选择临时编号 ${arg} 对应的客户：`,
         resolveSelectKeyboard(requestId),
       );
+    });
+
+    // 群线索：/记 /lead 、 /查 /find
+    this.bot.hears(/^\/(?:记|lead)(?:@\w+)?(?:\s|[\r\n]|$)/iu, async (ctx) => {
+      if (!(await this.ensureAuthorized(ctx))) return;
+      await this.handleLeadCreate(ctx);
+    });
+
+    this.bot.hears(/^\/(?:查|find)(?:@\w+)?(?:\s|$)/iu, async (ctx) => {
+      if (!(await this.ensureAuthorized(ctx))) return;
+      await this.handleLeadSearch(ctx);
     });
 
     this.bot.on(message('users_shared'), async (ctx) => {
@@ -682,6 +703,86 @@ export class TelegramBotService implements OnModuleInit {
     );
   }
 
+  private async handleLeadCreate(ctx: Context) {
+    const text =
+      ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+    const input = parseLeadText(text);
+    if (!leadHasContent(input)) {
+      await ctx.reply(
+        [
+          '用法示例：',
+          '/记',
+          '用户名: @xxx',
+          '昵称: 张三',
+          '电话: 09xxxxxxxx',
+          '需求: 客户要什么',
+          '',
+          '也支持：/记 @xxx 09xxxxxxxx 要货',
+          '至少填一项：用户名 / 昵称 / 电话 / 需求',
+        ].join('\n'),
+      );
+      return;
+    }
+
+    try {
+      const sourceChatId = ctx.chat ? BigInt(ctx.chat.id) : null;
+      const sourceMessageId =
+        ctx.message && 'message_id' in ctx.message
+          ? BigInt(ctx.message.message_id)
+          : null;
+      const { lead, softMatches } = await this.groupLeads.createLead({
+        input,
+        operator: this.getOperator(ctx),
+        sourceChatId,
+        sourceMessageId,
+      });
+      await ctx.reply(
+        formatLeadCreatedReply(lead, softMatches),
+        plainReplyExtra({ archiveLink: lead.archiveMessageLink }),
+      );
+    } catch (error) {
+      await ctx.reply(
+        `❌ 记录失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  private async handleLeadSearch(ctx: Context) {
+    const text =
+      ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+    const keyword = text
+      .replace(/^\/(?:查|find)(?:@\w+)?\s*/iu, '')
+      .trim();
+    if (!keyword) {
+      await ctx.reply('用法：/查 关键词（用户名、昵称或电话）');
+      return;
+    }
+    const matches = await this.groupLeads.search(keyword);
+    await ctx.reply(formatLeadSearchReply(matches, keyword));
+  }
+
+  private async sendLeadArchive(lead: GroupLead) {
+    const chatId = this.config.archiveChatId;
+    const sent = await this.bot.telegram.sendMessage(
+      chatId.toString(),
+      formatLeadArchiveCard(lead),
+    );
+    const chat = await this.bot.telegram.getChat(chatId.toString());
+    const username =
+      chat && 'username' in chat ? (chat.username as string | undefined) : undefined;
+    const link = buildTelegramMessageLink({
+      chatId,
+      messageId: sent.message_id,
+      chatUsername: username,
+      chatType: chat.type,
+    });
+    return {
+      chatId,
+      messageId: BigInt(sent.message_id),
+      link,
+    };
+  }
+
   private extractSharedUsers(shared: {
     users?: SharedUser[];
     user_ids?: number[];
@@ -716,17 +817,12 @@ export class TelegramBotService implements OnModuleInit {
   ): Promise<boolean> {
     if (!ctx.from) return false;
 
-    // 私聊完全开放：任意用户可录入 / 查询
+    // 私聊完全开放
     if (!ctx.chat || ctx.chat.type === 'private') {
       return true;
     }
 
-    // 群聊仍需：接待员白名单 + 授权录入群
-    const operatorId = BigInt(ctx.from.id);
-    if (!this.config.isOperator(operatorId)) {
-      return false;
-    }
-
+    // 授权录入群：任意成员可用（含 /记 /查）
     if (!this.config.isEntryChat(BigInt(ctx.chat.id))) {
       if (!options?.silentUnauthorizedChat) {
         // 未授权群不主动回复

@@ -90,7 +90,7 @@ export function isMeaningfulText(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-export function formatCode(prefix: 'C' | 'P', value: bigint): string {
+export function formatCode(prefix: 'C' | 'P' | 'L', value: bigint): string {
   return `${prefix}${value.toString().padStart(6, '0')}`;
 }
 

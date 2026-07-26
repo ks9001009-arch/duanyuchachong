@@ -74,6 +74,7 @@ model TelegramCustomer {
   updatedAt             DateTime                @updatedAt
   importLogs            TelegramCustomerImportLog[]
   resolvedPendingRecords PendingTelegramCustomer[]
+  groupLeads            GroupLead[]
 
   @@index([usernameNormalized])
   @@index([displayName])
@@ -107,6 +108,36 @@ model PendingTelegramCustomer {
   @@index([operatorTelegramId, createdAt])
   @@index([visibleName])
   @@index([resolvedCustomerId])
+}
+
+/// 群线索：用户名/昵称/电话/需求的软记录（非 Telegram ID 精准客户）
+model GroupLead {
+  id                    String    @id @default(cuid())
+  leadCode              String    @unique
+  username              String?
+  usernameNormalized    String?
+  nickname              String?
+  phone                 String?
+  phoneNormalized       String?
+  requirement           String?
+  operatorTelegramId    BigInt
+  operatorUsername      String?
+  operatorDisplayName   String?
+  sourceChatId          BigInt?
+  sourceMessageId       BigInt?
+  archiveChatId         BigInt?
+  archiveMessageId      BigInt?
+  archiveMessageLink    String?
+  matchedCustomerId     String?
+  matchedCustomer       TelegramCustomer? @relation(fields: [matchedCustomerId], references: [id], onDelete: SetNull)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([usernameNormalized])
+  @@index([nickname])
+  @@index([phoneNormalized])
+  @@index([createdAt])
+  @@index([matchedCustomerId])
 }
 
 model TelegramCustomerImportLog {
