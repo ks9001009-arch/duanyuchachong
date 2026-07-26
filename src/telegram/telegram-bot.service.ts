@@ -16,6 +16,7 @@ import {
   createRequestId,
   mainMenuKeyboard,
   MENU,
+  queryUserIdKeyboard,
   resolveSelectKeyboard,
   singleUserPickerKeyboard,
 } from './keyboards';
@@ -33,6 +34,7 @@ import {
   formatPendingQuery,
   formatResolvedArchiveReply,
   formatResolvedReply,
+  formatUserIdLookup,
 } from './message-formatter';
 import { OperatorSessionStore } from './operator-session.store';
 import { plainReplyExtra } from './reply-options';
@@ -190,8 +192,28 @@ export class TelegramBotService implements OnModuleInit {
           '/pending <P编号> — 查询待确认客户',
           '/username <用户名> — 用户名辅助查询',
           '/name <昵称> — 昵称模糊查询（仅供辅助）',
+          '/userid <@用户名> — 仅查 Telegram ID，不录入',
         ].join('\n'),
         mainMenuKeyboard(),
+      );
+    });
+
+    this.bot.hears(MENU.QUERY_USER_ID, async (ctx) => {
+      if (!(await this.ensureAuthorized(ctx))) return;
+      const requestId = createRequestId();
+      this.sessions.set(BigInt(ctx.from!.id), {
+        mode: 'QUERY_USER_ID',
+        requestId,
+        createdAt: Date.now(),
+      });
+      await ctx.reply(
+        [
+          '🆔 查询用户 ID（不录入）',
+          '',
+          '方式一：点击下方按钮选择用户',
+          '方式二：发送 /userid @用户名',
+        ].join('\n'),
+        queryUserIdKeyboard(requestId),
       );
     });
 
@@ -248,6 +270,17 @@ export class TelegramBotService implements OnModuleInit {
         formatPendingQuery(pending),
         plainReplyExtra({ archiveLink: pending.archiveMessageLink }),
       );
+    });
+
+    this.bot.command('userid', async (ctx) => {
+      if (!(await this.ensureAuthorized(ctx))) return;
+      if (ctx.from) this.sessions.clear(BigInt(ctx.from.id));
+      const arg = this.getCommandArg(ctx);
+      if (!arg) {
+        await ctx.reply('用法：/userid @username\n或使用菜单「🆔 查询用户ID」选择用户。');
+        return;
+      }
+      await this.replyUserIdByUsername(ctx, arg);
     });
 
     this.bot.command('username', async (ctx) => {
@@ -406,6 +439,20 @@ export class TelegramBotService implements OnModuleInit {
         firstName: user.first_name,
         lastName: user.last_name,
       });
+      return;
+    }
+
+    if (session.mode === 'QUERY_USER_ID') {
+      this.sessions.clear(operator.telegramId);
+      const user = users[0]!;
+      await ctx.reply(
+        formatUserIdLookup({
+          telegramId: String(user.user_id),
+          username: user.username,
+          displayName: buildDisplayName(user.first_name, user.last_name),
+        }),
+        mainMenuKeyboard(),
+      );
       return;
     }
 
@@ -680,6 +727,45 @@ export class TelegramBotService implements OnModuleInit {
       formatResolvedArchiveReply(params),
       { reply_parameters: { message_id: Number(params.archiveMessageId) } },
     );
+  }
+
+  private async replyUserIdByUsername(ctx: Context, rawUsername: string) {
+    const username = rawUsername.replace(/^@/, '').trim();
+    if (!username || !/^[A-Za-z0-9_]{5,32}$/.test(username)) {
+      await ctx.reply('❌ 用户名格式无效。用法：/userid @username');
+      return;
+    }
+
+    try {
+      const chat = await this.bot.telegram.getChat(`@${username}`);
+      if (chat.type !== 'private') {
+        await ctx.reply('❌ 该用户名不是个人账号，无法查询用户 ID。');
+        return;
+      }
+
+      const firstName =
+        'first_name' in chat ? (chat.first_name as string | undefined) : undefined;
+      const lastName =
+        'last_name' in chat ? (chat.last_name as string | undefined) : undefined;
+      const resolvedUsername =
+        'username' in chat ? (chat.username as string | undefined) : username;
+
+      await ctx.reply(
+        formatUserIdLookup({
+          telegramId: String(chat.id),
+          username: resolvedUsername,
+          displayName: buildDisplayName(firstName, lastName),
+        }),
+        mainMenuKeyboard(),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`查询用户 ID 失败 @${username}: ${message}`);
+      await ctx.reply(
+        '❌ 未能通过该用户名查到 ID。请确认用户名公开可见，或改用菜单选择用户。',
+        mainMenuKeyboard(),
+      );
+    }
   }
 
   private extractSharedUsers(shared: {

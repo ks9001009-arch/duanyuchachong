@@ -7,6 +7,7 @@ export const MENU = {
   FORWARD_HINT: '↪️ 转发客户消息',
   PENDING_LIST: '⏳ 待确认客户',
   QUERY_HINT: '🔎 查询客户',
+  QUERY_USER_ID: '🆔 查询用户ID',
   HELP: 'ℹ️ 使用说明',
   RESOLVE_SELECT: '✅ 为待确认客户补充身份',
 } as const;
@@ -31,8 +32,8 @@ export function mainMenuKeyboard(): ReplyKeyboard {
   return Markup.keyboard([
     [MENU.PICK_SINGLE, MENU.PICK_BATCH],
     [MENU.FORWARD_HINT, MENU.PENDING_LIST],
-    [MENU.QUERY_HINT, MENU.HELP],
-    [MENU.RESOLVE_SELECT],
+    [MENU.QUERY_HINT, MENU.QUERY_USER_ID],
+    [MENU.HELP, MENU.RESOLVE_SELECT],
   ]).resize();
 }
 
@@ -61,6 +62,13 @@ export function resolveSelectKeyboard(requestId: number): ReplyKeyboard {
       requestId,
       userRequestExtra(1),
     ),
+    Markup.button.text('↩️ 返回菜单'),
+  ]).resize();
+}
+
+export function queryUserIdKeyboard(requestId: number): ReplyKeyboard {
+  return Markup.keyboard([
+    Markup.button.userRequest('👤 选择用户以查看 ID', requestId, userRequestExtra(1)),
     Markup.button.text('↩️ 返回菜单'),
   ]).resize();
 }

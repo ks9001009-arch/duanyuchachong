@@ -18,6 +18,11 @@ export type OperatorSession =
       mode: 'USER_PICKER_BATCH';
       requestId: number;
       createdAt: number;
+    }
+  | {
+      mode: 'QUERY_USER_ID';
+      requestId: number;
+      createdAt: number;
     };
 
 const SESSION_TTL_MS = 30 * 60 * 1000;

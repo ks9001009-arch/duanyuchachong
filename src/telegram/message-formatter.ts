@@ -241,6 +241,22 @@ export function formatPendingQuery(
   ].join('\n');
 }
 
+export function formatUserIdLookup(params: {
+  telegramId: string;
+  username?: string | null;
+  displayName?: string | null;
+}): string {
+  return [
+    '🆔 用户 ID 查询结果',
+    '',
+    `Telegram ID：${params.telegramId}`,
+    `用户名：${params.username ? `@${params.username}` : '无'}`,
+    `昵称：${params.displayName || '无'}`,
+    '',
+    '（仅查询，未录入客户库）',
+  ].join('\n');
+}
+
 export function formatHelpText(): string {
   return [
     'ℹ️ 使用说明',
@@ -253,6 +269,7 @@ export function formatHelpText(): string {
     '   /pending <P编号>',
     '   /username <用户名>',
     '   /name <昵称>',
+    '   /userid <@用户名> — 仅查 Telegram ID，不录入',
     '5. 补充身份：',
     '   /resolve P000123 123456789',
     '   /resolve_select P000123',
