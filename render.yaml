@@ -5,8 +5,8 @@ services:
     runtime: node
     plan: free
     region: oregon
-    # build = React 管理后台 + NestJS（见根 package.json scripts.build）
-    buildCommand: pnpm install --frozen-lockfile && pnpm build
+    # 显式构建前端 + 后端，避免 Dashboard 覆盖脚本时漏掉 admin-web
+    buildCommand: pnpm install --frozen-lockfile && pnpm build:admin && pnpm build:server
     startCommand: pnpm prisma migrate deploy && node dist/main.js
     healthCheckPath: /health
     envVars:

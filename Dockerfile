@@ -9,6 +9,7 @@ RUN apt-get update \
 
 FROM base AS deps
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
+COPY admin-web/package.json ./admin-web/package.json
 COPY prisma ./prisma
 RUN pnpm install --frozen-lockfile=false
 RUN pnpm prisma generate

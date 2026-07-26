@@ -1,6 +1,8 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { AppModule } from './app.module';
 import { TelegramBotService } from './telegram/telegram-bot.service';
 import { AppConfigService } from './config/app-config.service';
@@ -48,6 +50,20 @@ async function bootstrap() {
     SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, doc));
     Logger.log('Swagger enabled at /api/docs', 'Bootstrap');
   }
+
+  const adminDistCandidates = [
+    join(process.cwd(), 'admin-web', 'dist'),
+    join(__dirname, '..', 'admin-web', 'dist'),
+  ];
+  const adminReady = adminDistCandidates.some((dir) =>
+    existsSync(join(dir, 'index.html')),
+  );
+  Logger.log(
+    adminReady
+      ? `管理后台构建产物已就绪（将由 ServeStatic 托管）`
+      : `警告：未找到 admin-web/dist/index.html，前端路由将 404。candidates=${adminDistCandidates.join(' | ')}`,
+    'Bootstrap',
+  );
 
   // 必须先监听 PORT，再启动 Long Polling。
   const port = process.env.PORT || 3000;

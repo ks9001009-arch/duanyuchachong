@@ -19,7 +19,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "render:build": "pnpm build",
+    "render:build": "pnpm build:admin && pnpm build:server",
     "render:start": "pnpm prisma migrate deploy && node dist/main.js",
     "test": "jest",
     "test:admin": "pnpm --filter admin-web test",
