@@ -51,21 +51,6 @@ model SystemCounter {
   updatedAt DateTime @updatedAt
 }
 
-/// 群内命令「绑定数据群」激活的录入群（持久化，重启不丢失）
-model BoundEntryChat {
-  chatId              BigInt   @id
-  title               String?
-  boundByTelegramId   BigInt
-  boundByUsername     String?
-  boundByDisplayName  String?
-  active              Boolean  @default(true)
-  boundAt             DateTime @default(now())
-  unboundAt           DateTime?
-  updatedAt           DateTime @updatedAt
-
-  @@index([active])
-}
-
 model TelegramCustomer {
   id                    String                  @id @default(cuid())
   customerCode          String                  @unique
@@ -75,9 +60,6 @@ model TelegramCustomer {
   firstName             String?
   lastName              String?
   displayName           String?
-  /// 绑定电话（来自群录入/人工补充；Telegram API 通常无法主动拉取）
-  phone                 String?
-  phoneNormalized       String?
   status                TelegramCustomerStatus  @default(IDENTIFIED)
   firstImportedById     BigInt
   firstImportedUsername String?
@@ -92,13 +74,10 @@ model TelegramCustomer {
   updatedAt             DateTime                @updatedAt
   importLogs            TelegramCustomerImportLog[]
   resolvedPendingRecords PendingTelegramCustomer[]
-  groupLeads            GroupLead[]
 
   @@index([usernameNormalized])
   @@index([displayName])
-  @@index([phoneNormalized])
   @@index([firstImportedAt])
-  @@index([lastObservedAt])
 }
 
 model PendingTelegramCustomer {
@@ -128,36 +107,6 @@ model PendingTelegramCustomer {
   @@index([operatorTelegramId, createdAt])
   @@index([visibleName])
   @@index([resolvedCustomerId])
-}
-
-/// 群线索：用户名/昵称/电话/需求的软记录（非 Telegram ID 精准客户）
-model GroupLead {
-  id                    String    @id @default(cuid())
-  leadCode              String    @unique
-  username              String?
-  usernameNormalized    String?
-  nickname              String?
-  phone                 String?
-  phoneNormalized       String?
-  requirement           String?
-  operatorTelegramId    BigInt
-  operatorUsername      String?
-  operatorDisplayName   String?
-  sourceChatId          BigInt?
-  sourceMessageId       BigInt?
-  archiveChatId         BigInt?
-  archiveMessageId      BigInt?
-  archiveMessageLink    String?
-  matchedCustomerId     String?
-  matchedCustomer       TelegramCustomer? @relation(fields: [matchedCustomerId], references: [id], onDelete: SetNull)
-  createdAt             DateTime  @default(now())
-  updatedAt             DateTime  @updatedAt
-
-  @@index([usernameNormalized])
-  @@index([nickname])
-  @@index([phoneNormalized])
-  @@index([createdAt])
-  @@index([matchedCustomerId])
 }
 
 model TelegramCustomerImportLog {

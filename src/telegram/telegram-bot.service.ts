@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Telegraf, Context } from 'telegraf';
 import { message } from 'telegraf/filters';
 import {
@@ -10,13 +10,6 @@ import {
 } from '@prisma/client';
 import { AppConfigService } from '../config/app-config.service';
 import { CustomerRegistryService } from '../customer/customer-registry.service';
-import { EntryChatService } from './entry-chat.service';
-import {
-  leadHasContent,
-  normalizePhone,
-  parseLeadText,
-  shouldAutoImportGroupText,
-} from '../customer/group-lead-parse';
 import { buildDisplayName, buildTelegramMessageLink, formatDateTime } from '../common/utils';
 import {
   batchUserPickerKeyboard,
@@ -30,9 +23,6 @@ import {
   formatCreatedReply,
   formatCustomerQuery,
   formatDuplicateReply,
-  formatGroupImportHitReply,
-  formatGroupImportPendingReply,
-  formatGroupImportResolvedReply,
   formatHelpText,
   formatHiddenForwardReply,
   formatIdentifiedArchiveCard,
@@ -56,17 +46,14 @@ type SharedUser = {
 };
 
 @Injectable()
-export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
+export class TelegramBotService implements OnModuleInit {
   private readonly logger = new Logger(TelegramBotService.name);
   private bot!: Telegraf<Context>;
   private readonly sessions = new OperatorSessionStore();
-  private profileSyncTimer: ReturnType<typeof setInterval> | null = null;
-  private profileSyncRunning = false;
 
   constructor(
     private readonly config: AppConfigService,
     private readonly registry: CustomerRegistryService,
-    private readonly entryChats: EntryChatService,
   ) {}
 
   onModuleInit() {
@@ -94,7 +81,6 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       try {
         await this.bot.launch({ dropPendingUpdates: true });
         this.logger.log('Telegraf long polling 已启动');
-        this.startProfileSyncLoop();
         return;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -115,31 +101,12 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   }
 
   async stop() {
-    this.stopProfileSyncLoop();
     if (this.bot) {
       this.bot.stop('shutdown');
     }
   }
 
-  onModuleDestroy() {
-    this.stopProfileSyncLoop();
-  }
-
   private registerHandlers() {
-    // 群绑定：未绑定的群也要能收到（不走 ensureAuthorized 的录入群校验）
-    this.bot.hears(/^绑定数据群$/, async (ctx) => {
-      await this.handleBindEntryChat(ctx);
-    });
-    this.bot.command('bind', async (ctx) => {
-      await this.handleBindEntryChat(ctx);
-    });
-    this.bot.hears(/^解绑数据群$/, async (ctx) => {
-      await this.handleUnbindEntryChat(ctx);
-    });
-    this.bot.command('unbind', async (ctx) => {
-      await this.handleUnbindEntryChat(ctx);
-    });
-
     this.bot.start(async (ctx) => {
       if (!(await this.ensureAuthorized(ctx))) return;
       await ctx.reply(formatMainMenuText(), mainMenuKeyboard());
@@ -391,35 +358,19 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
       );
     });
 
-    // 群聊：成员直接发用户名/名字/电话 → 自动查重并录入（无专用命令）
     this.bot.on(message('users_shared'), async (ctx) => {
       if (!(await this.ensureAuthorized(ctx))) return;
       await this.handleUsersShared(ctx);
     });
 
     this.bot.on('message', async (ctx) => {
-      if (!ctx.message) return;
-
-      // 凡是消息里出现的用户，若已是正式客户则静默同步昵称/用户名
-      await this.observeMessageActors(ctx);
-
-      if ('forward_origin' in ctx.message && ctx.message.forward_origin) {
-        if (
-          !(await this.ensureAuthorized(ctx, { silentUnauthorizedChat: true }))
-        ) {
-          return;
-        }
-        await this.handleForward(ctx);
+      if (!ctx.message || !('forward_origin' in ctx.message) || !ctx.message.forward_origin) {
         return;
       }
-
-      if (!('text' in ctx.message) || !ctx.message.text) return;
-      // 仅授权群自动处理；私聊仍用菜单/命令做精准录入
-      if (!ctx.chat || ctx.chat.type === 'private') return;
       if (!(await this.ensureAuthorized(ctx, { silentUnauthorizedChat: true }))) {
         return;
       }
-      await this.handleGroupAutoImport(ctx);
+      await this.handleForward(ctx);
     });
   }
 
@@ -731,439 +682,6 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
     );
   }
 
-  private async handleGroupAutoImport(ctx: Context) {
-    const text =
-      ctx.message && 'text' in ctx.message ? ctx.message.text : '';
-    if (!text?.trim()) return;
-
-    // 跳过命令、菜单按钮文案、绑定口令（由独立 handler 处理）
-    if (text.trim().startsWith('/')) return;
-    const bindPhrases = new Set([
-      '绑定数据群',
-      '解绑数据群',
-      '/bind',
-      '/unbind',
-    ]);
-    if (bindPhrases.has(text.trim())) return;
-    const menuValues = new Set<string>(Object.values(MENU));
-    if (menuValues.has(text.trim())) return;
-    if (text.includes('返回菜单')) return;
-
-    const input = parseLeadText(text);
-    if (!shouldAutoImportGroupText(input) || !leadHasContent(input)) {
-      return;
-    }
-
-    const sourceChatId = ctx.chat ? BigInt(ctx.chat.id) : null;
-    const sourceMessageId =
-      ctx.message && 'message_id' in ctx.message
-        ? BigInt(ctx.message.message_id)
-        : null;
-    const operator = this.getOperator(ctx);
-
-    try {
-      // 优先：用公开用户名向 Telegram 解析真实 ID，再按 ID 正式录入
-      const resolved = input.username
-        ? await this.resolveUserByUsername(input.username)
-        : null;
-
-      if (resolved) {
-        const outcome = await this.registry.checkAndImportIdentifiedCustomer({
-          profile: {
-            telegramId: resolved.telegramId,
-            username: resolved.username || input.username,
-            firstName: resolved.firstName,
-            lastName: resolved.lastName,
-            displayName: input.nickname,
-            phone: input.phone,
-          },
-          operator,
-          source: CustomerImportSource.MANUAL_ID,
-          sourceChatId,
-          sourceMessageId,
-        });
-        await ctx.reply(
-          formatGroupImportResolvedReply({
-            customer: outcome.customer,
-            created: outcome.kind === 'CREATED',
-            profileUpdated: outcome.profileUpdated,
-            resolvedUsername: input.username!,
-          }),
-          plainReplyExtra({ archiveLink: outcome.customer.archiveMessageLink }),
-        );
-        return;
-      }
-
-      const matches = await this.registry.softDedupSearch({
-        username: input.username,
-        nickname: input.nickname,
-        phone: input.phone,
-      });
-
-      if (matches.customers.length > 0 || matches.pendings.length > 0) {
-        for (const customer of matches.customers) {
-          try {
-            await this.registry.syncObservedProfile({
-              telegramId: customer.telegramId,
-              username: input.username,
-              displayName: input.nickname,
-              phone: input.phone,
-            });
-          } catch (error) {
-            this.logger.warn(
-              `群命中后资料同步失败 ${customer.telegramId.toString()}: ${String(error)}`,
-            );
-          }
-        }
-        await ctx.reply(
-          formatGroupImportHitReply({
-            customers: matches.customers,
-            pendings: matches.pendings,
-          }),
-        );
-        return;
-      }
-
-      const noteParts: string[] = [];
-      const phone = normalizePhone(input.phone);
-      if (phone) noteParts.push(`电话:${phone}`);
-      if (input.phone && !phone) noteParts.push(`电话原文:${input.phone.trim()}`);
-      if (input.requirement?.trim()) {
-        noteParts.push(`需求:${input.requirement.trim()}`);
-      }
-      if (input.username) {
-        noteParts.push('用户名解析ID失败:暂无公开可解析身份');
-      }
-
-      const pending = await this.registry.createPendingCustomer({
-        visibleName: input.nickname?.trim() || null,
-        visibleUsername: input.username?.replace(/^@+/, '').trim() || null,
-        note: noteParts.length > 0 ? noteParts.join('；') : null,
-        failureReason: PendingFailureReason.MANUAL_PENDING,
-        operator,
-        sourceChatId,
-        sourceMessageId,
-        source: CustomerImportSource.MANUAL_ID,
-      });
-
-      await ctx.reply(
-        formatGroupImportPendingReply(pending),
-        plainReplyExtra({ archiveLink: pending.archiveMessageLink }),
-      );
-    } catch (error) {
-      this.logger.warn(
-        `群自动查重录入失败：${error instanceof Error ? error.message : String(error)}`,
-      );
-      await ctx.reply(
-        `❌ 查重录入失败：${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /**
-   * 通过公开用户名尝试解析 Telegram 用户 ID（Bot API getChat）。
-   * 仅对 private 用户生效；频道/群用户名或不可达时返回 null。
-   */
-  private async resolveUserByUsername(username: string): Promise<{
-    telegramId: bigint;
-    username?: string;
-    firstName?: string;
-    lastName?: string;
-  } | null> {
-    const normalized = username.replace(/^@+/, '').trim();
-    if (!normalized || !/^[A-Za-z0-9_]{4,}$/.test(normalized)) {
-      return null;
-    }
-    try {
-      const chat = await this.bot.telegram.getChat(`@${normalized}`);
-      if (chat.type !== 'private') {
-        return null;
-      }
-      const id = typeof chat.id === 'number' ? chat.id : Number(chat.id);
-      if (!Number.isFinite(id)) return null;
-      return {
-        telegramId: BigInt(id),
-        username:
-          'username' in chat && chat.username
-            ? String(chat.username)
-            : normalized,
-        firstName:
-          'first_name' in chat && chat.first_name
-            ? String(chat.first_name)
-            : undefined,
-        lastName:
-          'last_name' in chat && chat.last_name
-            ? String(chat.last_name)
-            : undefined,
-      };
-    } catch (error) {
-      this.logger.debug(
-        `用户名 @${normalized} 无法解析为 Telegram ID：${String(error)}`,
-      );
-      return null;
-    }
-  }
-
-  private async handleBindEntryChat(ctx: Context) {
-    if (!ctx.chat || ctx.chat.type === 'private') {
-      await ctx.reply('请在需要录入的群里发送「绑定数据群」（或 /bind）。');
-      return;
-    }
-    if (!ctx.from) return;
-
-    const allowed = await this.canManageEntryBinding(ctx);
-    if (!allowed) {
-      await ctx.reply(
-        '❌ 仅群管理员或系统接待员可绑定数据群。请先将机器人设为管理员后再试。',
-      );
-      return;
-    }
-
-    const chatId = BigInt(ctx.chat.id);
-    const title =
-      'title' in ctx.chat ? (ctx.chat.title as string | undefined) : undefined;
-    const operator = this.getOperator(ctx);
-
-    try {
-      const existing = await this.entryChats.getBinding(chatId);
-      await this.entryChats.bind({
-        chatId,
-        title,
-        operatorTelegramId: operator.telegramId,
-        operatorUsername: operator.username,
-        operatorDisplayName: operator.displayName,
-      });
-
-      const wasActive = Boolean(existing?.active);
-      await ctx.reply(
-        [
-          wasActive ? '✅ 本群已是数据群（已刷新绑定）' : '✅ 已绑定为数据群',
-          '',
-          `群 ID：${chatId.toString()}`,
-          title ? `群名称：${title}` : null,
-          '',
-          '现在可在本群直接发送客户资料（含 @用户名 和/或 电话）：',
-          '机器人会自动查重；未命中则录入为待确认。',
-          '',
-          '解绑请发送：解绑数据群',
-        ]
-          .filter(Boolean)
-          .join('\n'),
-      );
-    } catch (error) {
-      this.logger.warn(
-        `绑定数据群失败：${error instanceof Error ? error.message : String(error)}`,
-      );
-      await ctx.reply(
-        `❌ 绑定失败：${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  private async handleUnbindEntryChat(ctx: Context) {
-    if (!ctx.chat || ctx.chat.type === 'private') {
-      await ctx.reply('请在群里发送「解绑数据群」（或 /unbind）。');
-      return;
-    }
-    if (!ctx.from) return;
-
-    const allowed = await this.canManageEntryBinding(ctx);
-    if (!allowed) {
-      await ctx.reply('❌ 仅群管理员或系统接待员可解绑数据群。');
-      return;
-    }
-
-    const chatId = BigInt(ctx.chat.id);
-    try {
-      if (this.config.isEntryChat(chatId)) {
-        await ctx.reply(
-          [
-            '⚠️ 本群在服务器环境变量 TELEGRAM_ENTRY_CHAT_IDS 中，',
-            '命令解绑无法移除该项。请联系管理员改环境变量，或继续使用。',
-          ].join('\n'),
-        );
-        return;
-      }
-
-      const result = await this.entryChats.unbind(chatId);
-      if (result.kind === 'NOT_FOUND' || result.kind === 'ALREADY_INACTIVE') {
-        await ctx.reply('本群当前未绑定为数据群。');
-        return;
-      }
-      await ctx.reply('✅ 已解绑。本群将不再自动查重录入。重新绑定请发送：绑定数据群');
-    } catch (error) {
-      await ctx.reply(
-        `❌ 解绑失败：${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  /** 群管理员 / 群主 / 环境变量接待员 可绑定 */
-  private async canManageEntryBinding(ctx: Context): Promise<boolean> {
-    if (!ctx.from || !ctx.chat) return false;
-    if (this.config.isOperator(ctx.from.id)) return true;
-    try {
-      const member = await ctx.getChatMember(ctx.from.id);
-      return member.status === 'creator' || member.status === 'administrator';
-    } catch (error) {
-      this.logger.warn(
-        `读取群成员身份失败：${error instanceof Error ? error.message : String(error)}`,
-      );
-      return false;
-    }
-  }
-
-  private async observeMessageActors(ctx: Context) {
-    const candidates: Array<{
-      telegramId: bigint;
-      username?: string | null;
-      firstName?: string | null;
-      lastName?: string | null;
-    }> = [];
-
-    if (ctx.from) {
-      candidates.push({
-        telegramId: BigInt(ctx.from.id),
-        username: ctx.from.username,
-        firstName: ctx.from.first_name,
-        lastName: ctx.from.last_name,
-      });
-    }
-
-    const msg = ctx.message as
-      | (Context['message'] & {
-          forward_origin?: {
-            type: string;
-            sender_user?: {
-              id: number;
-              username?: string;
-              first_name?: string;
-              last_name?: string;
-            };
-          };
-          users_shared?: {
-            users?: SharedUser[];
-          };
-        })
-      | undefined;
-
-    if (msg?.forward_origin?.type === 'user' && msg.forward_origin.sender_user) {
-      const u = msg.forward_origin.sender_user;
-      candidates.push({
-        telegramId: BigInt(u.id),
-        username: u.username,
-        firstName: u.first_name,
-        lastName: u.last_name,
-      });
-    }
-
-    if (msg?.users_shared?.users) {
-      for (const u of msg.users_shared.users) {
-        candidates.push({
-          telegramId: BigInt(u.user_id),
-          username: u.username,
-          firstName: u.first_name,
-          lastName: u.last_name,
-        });
-      }
-    }
-
-    for (const profile of candidates) {
-      try {
-        await this.registry.syncObservedProfile(profile, {
-          allowClearUsername: true,
-        });
-      } catch (error) {
-        this.logger.debug(
-          `观察同步跳过 ${profile.telegramId.toString()}: ${String(error)}`,
-        );
-      }
-    }
-  }
-
-  private startProfileSyncLoop() {
-    this.stopProfileSyncLoop();
-    // 启动后稍晚扫一轮，之后每 10 分钟扫最久未观察的一批
-    setTimeout(() => void this.runProfileSyncSweep(), 45_000);
-    this.profileSyncTimer = setInterval(
-      () => void this.runProfileSyncSweep(),
-      10 * 60 * 1000,
-    );
-    this.logger.log('客户资料定时扫描已启动（每 10 分钟）');
-  }
-
-  private stopProfileSyncLoop() {
-    if (this.profileSyncTimer) {
-      clearInterval(this.profileSyncTimer);
-      this.profileSyncTimer = null;
-    }
-  }
-
-  /**
-   * 对库内 Telegram ID 调用 getChat，刷新用户名/昵称。
-   * 电话无法由 Bot API 主动拉取，仅在群录入/人工补充时更新。
-   */
-  private async runProfileSyncSweep() {
-    if (!this.bot || this.profileSyncRunning) return;
-    this.profileSyncRunning = true;
-    let scanned = 0;
-    let updated = 0;
-    let failed = 0;
-    try {
-      const batch = await this.registry.listCustomersForSync(150);
-      for (const row of batch) {
-        scanned += 1;
-        try {
-          const chat = await this.bot.telegram.getChat(row.telegramId.toString());
-          const username =
-            chat && 'username' in chat
-              ? ((chat.username as string | undefined) ?? null)
-              : null;
-          const firstName =
-            chat && 'first_name' in chat
-              ? ((chat.first_name as string | undefined) ?? null)
-              : null;
-          const lastName =
-            chat && 'last_name' in chat
-              ? ((chat.last_name as string | undefined) ?? null)
-              : null;
-
-          const result = await this.registry.syncObservedProfile(
-            {
-              telegramId: row.telegramId,
-              username,
-              firstName,
-              lastName,
-            },
-            { allowClearUsername: true },
-          );
-          if (result.updated) updated += 1;
-        } catch {
-          // 用户未与机器人互动 / 隐私限制 / 已注销等，跳过
-          failed += 1;
-          // 仍刷新 lastObservedAt，避免反复卡在同一批失败 ID
-          try {
-            await this.registry.syncObservedProfile({
-              telegramId: row.telegramId,
-            });
-          } catch {
-            // ignore
-          }
-        }
-        await new Promise((r) => setTimeout(r, 80));
-      }
-      this.logger.log(
-        `客户资料扫描完成：扫描 ${scanned}，更新 ${updated}，不可达 ${failed}`,
-      );
-    } catch (error) {
-      this.logger.warn(
-        `客户资料扫描异常：${error instanceof Error ? error.message : String(error)}`,
-      );
-    } finally {
-      this.profileSyncRunning = false;
-    }
-  }
-
   private extractSharedUsers(shared: {
     users?: SharedUser[];
     user_ids?: number[];
@@ -1198,17 +716,20 @@ export class TelegramBotService implements OnModuleInit, OnModuleDestroy {
   ): Promise<boolean> {
     if (!ctx.from) return false;
 
-    // 私聊完全开放
+    // 私聊完全开放：任意用户可录入 / 查询
     if (!ctx.chat || ctx.chat.type === 'private') {
       return true;
     }
 
-    // 授权录入群：环境变量白名单 或 命令「绑定数据群」激活的群
-    const chatId = BigInt(ctx.chat.id);
-    const allowed = await this.entryChats.isEntryChat(chatId);
-    if (!allowed) {
+    // 群聊仍需：接待员白名单 + 授权录入群
+    const operatorId = BigInt(ctx.from.id);
+    if (!this.config.isOperator(operatorId)) {
+      return false;
+    }
+
+    if (!this.config.isEntryChat(BigInt(ctx.chat.id))) {
       if (!options?.silentUnauthorizedChat) {
-        // 未授权群不主动回复（绑定命令另有独立入口）
+        // 未授权群不主动回复
       }
       return false;
     }

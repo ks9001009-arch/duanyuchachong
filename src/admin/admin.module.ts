@@ -16,10 +16,6 @@ import { AdminPendingController } from './pending/admin-pending.controller';
 import { AdminPendingService } from './pending/admin-pending.service';
 import { AdminLogsController } from './logs/admin-logs.controller';
 import { AdminLogsService } from './logs/admin-logs.service';
-import { AdminExportController } from './export/admin-export.controller';
-import { AdminExportService } from './export/admin-export.service';
-import { AdminImportController } from './import/admin-import.controller';
-import { AdminImportService } from './import/admin-import.service';
 
 @Module({
   imports: [
@@ -43,8 +39,6 @@ import { AdminImportService } from './import/admin-import.service';
     AdminCustomersController,
     AdminPendingController,
     AdminLogsController,
-    AdminExportController,
-    AdminImportController,
   ],
   providers: [
     AdminBootstrapService,
@@ -54,8 +48,6 @@ import { AdminImportService } from './import/admin-import.service';
     AdminCustomersService,
     AdminPendingService,
     AdminLogsService,
-    AdminExportService,
-    AdminImportService,
   ],
 })
 export class AdminModule {}

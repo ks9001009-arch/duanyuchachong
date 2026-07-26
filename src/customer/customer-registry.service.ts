@@ -13,27 +13,14 @@ import {
   isMeaningfulText,
   normalizeUsername,
 } from '../common/utils';
-import { normalizePhone } from './group-lead-parse';
 import {
   ArchiveSender,
   CheckAndImportInput,
   CreatePendingInput,
-  IdentifiedProfileInput,
   ImportOutcome,
   ResolveOutcome,
   ResolvePendingInput,
 } from './customer.types';
-
-/** 从待确认 note 中提取「电话:xxx」 */
-export function extractPhoneFromPendingNote(
-  note?: string | null,
-): string | null {
-  if (!note) return null;
-  const match = note.match(/电话原文:([^；;]+)|电话:([^；;]+)/);
-  const raw = (match?.[1] || match?.[2] || '').trim() || null;
-  if (!raw) return null;
-  return normalizePhone(raw) ?? (raw.replace(/\s+/g, '') || null);
-}
 
 @Injectable()
 export class CustomerRegistryService {
@@ -96,12 +83,7 @@ export class CustomerRegistryService {
         const lastName = isMeaningfulText(input.profile.lastName)
           ? input.profile.lastName.trim()
           : null;
-        const displayName =
-          buildDisplayName(firstName, lastName) ||
-          (isMeaningfulText(input.profile.displayName)
-            ? input.profile.displayName.trim()
-            : null);
-        const phone = normalizePhone(input.profile.phone);
+        const displayName = buildDisplayName(firstName, lastName);
 
         return tx.telegramCustomer.create({
           data: {
@@ -112,8 +94,6 @@ export class CustomerRegistryService {
             firstName,
             lastName,
             displayName,
-            phone,
-            phoneNormalized: phone,
             firstImportedById: input.operator.telegramId,
             firstImportedUsername: input.operator.username ?? null,
             firstImportedName: input.operator.displayName ?? null,
@@ -254,7 +234,7 @@ export class CustomerRegistryService {
       customerId: null,
       targetTelegramId: null,
       operator: input.operator,
-      source: input.source ?? CustomerImportSource.FORWARDED_MESSAGE,
+      source: CustomerImportSource.FORWARDED_MESSAGE,
       result: CustomerImportResult.PENDING_CREATED,
       sourceChatId: input.sourceChatId,
       sourceMessageId: input.sourceMessageId,
@@ -267,100 +247,6 @@ export class CustomerRegistryService {
     });
 
     return finalPending;
-  }
-
-  /**
-   * 群聊软查重：按用户名/昵称/电话匹配正式客户与待确认（非 Telegram ID 精准）。
-   */
-  async softDedupSearch(input: {
-    username?: string | null;
-    nickname?: string | null;
-    phone?: string | null;
-    keyword?: string | null;
-  }) {
-    const usernameNormalized = normalizeUsername(input.username ?? undefined);
-    const nickname = input.nickname?.trim() || null;
-    const phone = normalizePhone(input.phone) || input.phone?.replace(/\D/g, '') || null;
-    const keyword = input.keyword?.trim() || null;
-
-    const customerOr: Prisma.TelegramCustomerWhereInput[] = [];
-    if (usernameNormalized) {
-      customerOr.push({ usernameNormalized });
-      customerOr.push({ usernameNormalized: { startsWith: usernameNormalized } });
-    }
-    if (nickname) {
-      customerOr.push({
-        displayName: { contains: nickname, mode: 'insensitive' },
-      });
-    }
-    if (phone && phone.length >= 6) {
-      customerOr.push({ phoneNormalized: phone });
-      customerOr.push({ phoneNormalized: { contains: phone } });
-      customerOr.push({ phone: { contains: phone } });
-    }
-    if (keyword) {
-      const kwUser = normalizeUsername(keyword);
-      if (kwUser) {
-        customerOr.push({ usernameNormalized: kwUser });
-        customerOr.push({
-          usernameNormalized: { startsWith: kwUser },
-        });
-      }
-      customerOr.push({
-        displayName: { contains: keyword.replace(/^@/, ''), mode: 'insensitive' },
-      });
-    }
-
-    const customers =
-      customerOr.length > 0
-        ? await this.prisma.telegramCustomer.findMany({
-            where: { OR: customerOr },
-            take: 15,
-            orderBy: { lastObservedAt: 'desc' },
-          })
-        : [];
-
-    const pendingOr: Prisma.PendingTelegramCustomerWhereInput[] = [];
-    if (usernameNormalized) {
-      pendingOr.push({
-        visibleUsername: { equals: usernameNormalized, mode: 'insensitive' },
-      });
-      pendingOr.push({
-        visibleUsername: { contains: usernameNormalized, mode: 'insensitive' },
-      });
-    }
-    if (nickname) {
-      pendingOr.push({
-        visibleName: { contains: nickname, mode: 'insensitive' },
-      });
-    }
-    if (phone && phone.length >= 6) {
-      pendingOr.push({ note: { contains: phone } });
-    }
-    if (keyword) {
-      const kw = keyword.replace(/^@/, '');
-      pendingOr.push({
-        visibleUsername: { contains: kw, mode: 'insensitive' },
-      });
-      pendingOr.push({
-        visibleName: { contains: kw, mode: 'insensitive' },
-      });
-      pendingOr.push({ note: { contains: kw } });
-    }
-
-    const pendings =
-      pendingOr.length > 0
-        ? await this.prisma.pendingTelegramCustomer.findMany({
-            where: {
-              status: PendingCustomerStatus.PENDING_ID,
-              OR: pendingOr,
-            },
-            take: 15,
-            orderBy: { createdAt: 'desc' },
-          })
-        : [];
-
-    return { customers, pendings };
   }
 
   async resolvePendingCustomer(
@@ -389,49 +275,37 @@ export class CustomerRegistryService {
       where: { telegramId },
     });
 
-    const phoneFromPending = extractPhoneFromPendingNote(pending.note);
-
     if (existing) {
-      const synced = await this.applyProfileUpdates(existing, {
-        telegramId,
-        username: input.profile?.username ?? pending.visibleUsername,
-        firstName: input.profile?.firstName ?? pending.visibleName,
-        lastName: input.profile?.lastName ?? null,
-        displayName: input.profile?.displayName ?? pending.visibleName,
-        phone: input.profile?.phone ?? phoneFromPending,
-      });
-
       const merged = await this.prisma.pendingTelegramCustomer.update({
         where: { id: pending.id },
         data: {
           status: PendingCustomerStatus.MERGED,
-          resolvedCustomerId: synced.customer.id,
+          resolvedCustomerId: existing.id,
           resolvedByTelegramId: input.operator.telegramId,
           resolvedAt: new Date(),
         },
       });
 
       await this.writeImportLog({
-        customerId: synced.customer.id,
+        customerId: existing.id,
         targetTelegramId: telegramId,
         operator: input.operator,
         source: CustomerImportSource.PENDING_RESOLUTION,
         result: CustomerImportResult.PENDING_MERGED,
-        archiveMessageLink: synced.customer.archiveMessageLink,
+        archiveMessageLink: existing.archiveMessageLink,
         metadata: {
           pendingCode: pending.pendingCode,
-          profileUpdated: synced.profileChanged,
           ...(input.metadata ?? {}),
         } as Prisma.InputJsonValue,
       });
 
       await this.safeReplyPendingResolved({
         pending: merged,
-        customer: synced.customer,
+        customer: existing,
         operator: input.operator,
       });
 
-      return { kind: 'MERGED', pending: merged, customer: synced.customer };
+      return { kind: 'MERGED', pending: merged, customer: existing };
     }
 
     const profile = input.profile ?? {
@@ -439,12 +313,7 @@ export class CustomerRegistryService {
       username: pending.visibleUsername,
       firstName: pending.visibleName,
       lastName: null,
-      displayName: pending.visibleName,
-      phone: phoneFromPending,
     };
-    if (!profile.phone && phoneFromPending) {
-      profile.phone = phoneFromPending;
-    }
 
     const created = await this.checkAndImportIdentifiedCustomer({
       profile: {
@@ -535,45 +404,6 @@ export class CustomerRegistryService {
     });
   }
 
-  /**
-   * 静默同步已存在客户的资料（不写导入日志、不新建客户）。
-   * 用于消息见人更新、定时 getChat 扫描。
-   */
-  async syncObservedProfile(
-    profile: IdentifiedProfileInput,
-    options?: { allowClearUsername?: boolean },
-  ): Promise<{ updated: boolean; customer: TelegramCustomer | null }> {
-    if (typeof profile.telegramId !== 'bigint') {
-      throw new Error('telegramId 必须为 BigInt');
-    }
-    const existing = await this.prisma.telegramCustomer.findUnique({
-      where: { telegramId: profile.telegramId },
-    });
-    if (!existing) {
-      return { updated: false, customer: null };
-    }
-    const result = await this.applyProfileUpdates(existing, profile, options);
-    return { updated: result.profileChanged, customer: result.customer };
-  }
-
-  /** 供定时扫描：优先同步最久未观察的正式客户 */
-  async listCustomersForSync(limit = 200) {
-    return this.prisma.telegramCustomer.findMany({
-      orderBy: { lastObservedAt: 'asc' },
-      take: limit,
-      select: {
-        id: true,
-        telegramId: true,
-        username: true,
-        firstName: true,
-        lastName: true,
-        displayName: true,
-        phone: true,
-        lastObservedAt: true,
-      },
-    });
-  }
-
   async writeInvalidLog(params: {
     operator: { telegramId: bigint; username?: string | null; displayName?: string | null };
     source: CustomerImportSource;
@@ -598,8 +428,7 @@ export class CustomerRegistryService {
 
   private async applyProfileUpdates(
     existing: TelegramCustomer,
-    profile: IdentifiedProfileInput,
-    options?: { allowClearUsername?: boolean },
+    profile: CheckAndImportInput['profile'],
   ): Promise<{ customer: TelegramCustomer; profileChanged: boolean }> {
     const data: Prisma.TelegramCustomerUpdateInput = {
       lastObservedAt: new Date(),
@@ -613,10 +442,6 @@ export class CustomerRegistryService {
         data.usernameNormalized = normalizeUsername(username);
         changed = true;
       }
-    } else if (options?.allowClearUsername && existing.username) {
-      data.username = null;
-      data.usernameNormalized = null;
-      changed = true;
     }
 
     if (isMeaningfulText(profile.firstName) && profile.firstName.trim() !== existing.firstName) {
@@ -635,22 +460,9 @@ export class CustomerRegistryService {
         : existing.firstName;
     const nextLast =
       typeof data.lastName === 'string' ? data.lastName : existing.lastName;
-    const builtDisplay = buildDisplayName(nextFirst, nextLast);
-    if (builtDisplay && builtDisplay !== existing.displayName) {
-      data.displayName = builtDisplay;
-      changed = true;
-    } else if (
-      isMeaningfulText(profile.displayName) &&
-      profile.displayName.trim() !== existing.displayName
-    ) {
-      data.displayName = profile.displayName.trim();
-      changed = true;
-    }
-
-    const phone = normalizePhone(profile.phone);
-    if (phone && phone !== existing.phoneNormalized && phone !== existing.phone) {
-      data.phone = phone;
-      data.phoneNormalized = phone;
+    const nextDisplay = buildDisplayName(nextFirst, nextLast);
+    if (nextDisplay && nextDisplay !== existing.displayName) {
+      data.displayName = nextDisplay;
       changed = true;
     }
 

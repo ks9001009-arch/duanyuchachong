@@ -8,7 +8,6 @@ import {
   formatDateTime,
   sourceLabel,
 } from '../common/utils';
-import { GROUP_ID_UPLOAD_REMINDER } from '../customer/group-lead-parse';
 
 export function formatCreatedReply(
   customer: TelegramCustomer,
@@ -22,7 +21,6 @@ export function formatCreatedReply(
     `${customer.telegramId.toString()}`,
     `用户名：${customer.username ? `@${customer.username}` : '无'}`,
     `昵称：${customer.displayName ?? '无'}`,
-    `电话：${customer.phone ?? '无'}`,
     '',
     `首次录入员：${customer.firstImportedName ?? customer.firstImportedUsername ?? customer.firstImportedById.toString()}`,
     `首次录入时间：${formatDateTime(customer.firstImportedAt)}`,
@@ -43,7 +41,6 @@ export function formatDuplicateReply(
     `${customer.telegramId.toString()}`,
     `用户名：${customer.username ? `@${customer.username}` : '无'}`,
     `昵称：${customer.displayName ?? '无'}`,
-    `电话：${customer.phone ?? '无'}`,
     '',
     `首次录入员：${customer.firstImportedName ?? customer.firstImportedUsername ?? customer.firstImportedById.toString()}`,
     `首次录入时间：${formatDateTime(customer.firstImportedAt)}`,
@@ -107,9 +104,6 @@ export function formatIdentifiedArchiveCard(customer: TelegramCustomer): string 
     '',
     '昵称：',
     customer.displayName ?? '无',
-    '',
-    '电话：',
-    customer.phone ?? '无',
     '',
     '状态：',
     '已确认',
@@ -217,7 +211,6 @@ export function formatCustomerQuery(
     `Telegram ID：${customer.telegramId.toString()}`,
     `用户名：${customer.username ? `@${customer.username}` : '无'}`,
     `昵称：${customer.displayName ?? '无'}`,
-    `电话：${customer.phone ?? '无'}`,
     '状态：已确认',
     '',
     `首次录入时间：${formatDateTime(customer.firstImportedAt)}`,
@@ -252,89 +245,22 @@ export function formatHelpText(): string {
   return [
     'ℹ️ 使用说明',
     '',
-    '【精准查重录入 · Telegram ID】',
-    '1. 选择客户 / 批量选择 / 转发消息',
-    '2. /id <TelegramID>  /pending <P编号>',
-    '3. /resolve P000123 123456789',
-    '',
-    '【群聊自动查重录入】',
-    '4. 把机器人拉进群并设为管理员',
-    '5. 群管理员发送：绑定数据群（或 /bind）',
-    '6. 发送 @用户名：机器人会尝试解析 Telegram ID 并正式录入',
-    '7. 解析不到 ID 时：按用户名/电话软查重；未命中则录入待确认',
-    '8. 待确认客户请用接待号私聊补充 Telegram ID',
-    '9. 解绑发送：解绑数据群（或 /unbind）',
+    '1. 选择客户查重：通过 Telegram 用户选择器精准录入',
+    '2. 批量选择客户：一次最多 10 人',
+    '3. 转发客户消息：可识别来源用户；隐藏来源会保存为待确认',
+    '4. 查询命令：',
+    '   /id <TelegramID>',
+    '   /pending <P编号>',
+    '   /username <用户名>',
+    '   /name <昵称>',
+    '5. 补充身份：',
+    '   /resolve P000123 123456789',
+    '   /resolve_select P000123',
     '',
     '注意：',
-    '- 正式客户以 Telegram ID 唯一查重（百分百）',
-    '- 仅公开用户名通常可被解析；无用户名/解析失败则进待确认',
-    '- 已绑定群内任意成员发送即可',
-  ].join('\n');
-}
-
-export function formatGroupImportResolvedReply(params: {
-  customer: TelegramCustomer;
-  profileUpdated: boolean;
-  created: boolean;
-  resolvedUsername: string;
-}): string {
-  const { customer, created, profileUpdated, resolvedUsername } = params;
-  return [
-    created ? '✅ 已通过用户名解析到 Telegram ID 并正式录入' : '⚠️ 该客户已存在（用户名已解析到 ID）',
-    '',
-    `解析用户名：@${resolvedUsername.replace(/^@+/, '')}`,
-    `客户编号：${customer.customerCode}`,
-    `Telegram ID：${customer.telegramId.toString()}`,
-    `用户名：${customer.username ? `@${customer.username}` : '无'}`,
-    `昵称：${customer.displayName ?? '无'}`,
-    `电话：${customer.phone ?? '无'}`,
-    profileUpdated && !created ? '本次：资料已更新' : null,
-    !created && !profileUpdated ? '本次：未重复写入' : null,
-    '',
-    `存档：${archiveLinkText(customer.archiveMessageLink, 'hint')}`,
-  ]
-    .filter((line) => line != null)
-    .join('\n');
-}
-
-export function formatGroupImportHitReply(params: {
-  customers: TelegramCustomer[];
-  pendings: PendingTelegramCustomer[];
-}): string {
-  const lines = [
-    '⚠️ 查重命中：数据疑似已存在，未重复录入',
-    '',
-    '说明：按用户名/昵称/电话辅助匹配（非 ID 精准）。',
-  ];
-  for (const c of params.customers.slice(0, 5)) {
-    lines.push(
-      `- 正式客户 ${c.customerCode}｜ID ${c.telegramId.toString()}｜${c.username ? `@${c.username}` : '无'}｜${c.displayName ?? '无'}`,
-    );
-  }
-  for (const p of params.pendings.slice(0, 5)) {
-    lines.push(
-      `- 待确认 ${p.pendingCode}｜${p.visibleUsername ? `@${p.visibleUsername}` : '无'}｜${p.visibleName ?? '无'}`,
-    );
-  }
-  lines.push('', GROUP_ID_UPLOAD_REMINDER);
-  return lines.join('\n');
-}
-
-export function formatGroupImportPendingReply(
-  pending: PendingTelegramCustomer,
-): string {
-  return [
-    '✅ 查重未命中，已录入为待确认客户',
-    '',
-    `临时编号：${pending.pendingCode}`,
-    `用户名：${pending.visibleUsername ? `@${pending.visibleUsername}` : '无'}`,
-    `昵称：${pending.visibleName ?? '无'}`,
-    `备注：${pending.note ?? '无'}`,
-    '',
-    GROUP_ID_UPLOAD_REMINDER,
-    '',
-    `也可：/resolve_select ${pending.pendingCode}`,
-    `存档：${archiveLinkText(pending.archiveMessageLink, 'hint')}`,
+    '- 正式客户以 Telegram ID 唯一查重',
+    '- 昵称/用户名仅供辅助，不能判定为同一人',
+    '- 私聊消息无法生成跨接待员通用链接',
   ].join('\n');
 }
 
@@ -343,6 +269,5 @@ export function formatMainMenuText(): string {
     '📋 Telegram 客户查重录入',
     '',
     '请选择操作：',
-    '群内可直接发送：用户名 / 名字 / 电话，自动查重并录入',
   ].join('\n');
 }

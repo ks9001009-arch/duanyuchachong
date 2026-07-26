@@ -50,7 +50,6 @@ export type CustomerListItem = {
   telegramId: string;
   username: string | null;
   displayName: string | null;
-  phone?: string | null;
   status: TelegramCustomerStatus;
   firstImportedById: string;
   firstImportedUsername: string | null;

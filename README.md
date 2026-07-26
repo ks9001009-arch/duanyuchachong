@@ -26,8 +26,8 @@ cp .env.example .env
 | 变量 | 说明 |
 |------|------|
 | `TELEGRAM_BOT_TOKEN` | BotFather 下发的 Token（本项目专用，勿复用其他项目） |
-| `TELEGRAM_OPERATOR_IDS` | 可选；名单内接待员可在群内执行绑定/解绑（群管理员也可） |
-| `TELEGRAM_ENTRY_CHAT_IDS` | 可选；额外写死的授权群 ID。也可用群内「绑定数据群」动态激活 |
+| `TELEGRAM_OPERATOR_IDS` | 群聊授权接待员 Telegram ID，逗号分隔（**私聊已开放，不校验此名单**） |
+| `TELEGRAM_ENTRY_CHAT_IDS` | 授权录入群 ID，逗号分隔（私聊不需要；群聊还须搭配接待员名单） |
 | `TELEGRAM_ARCHIVE_CHAT_ID` | 统一客户存档群 ID |
 | `DATABASE_URL` | PostgreSQL 连接串 |
 | `ADMIN_INITIAL_USERNAME` | 初始管理员用户名（仅首次创建） |
@@ -40,46 +40,20 @@ cp .env.example .env
 
 ---
 
-## 3. 权限说明与群绑定
+## 3. 权限说明与接待员 ID
 
-- **私聊**：已完全开放，任何人私聊机器人即可使用。
-- **数据群**：群管理员（或 `TELEGRAM_OPERATOR_IDS` 接待员）在群内发送 **`绑定数据群`**（或 `/bind`）即可激活；之后任意成员可发客户资料自动查重录入。
-- **解绑**：发送 **`解绑数据群`**（或 `/unbind`）。
-- **未绑定群**：除绑定命令外不响应。
-- `TELEGRAM_ENTRY_CHAT_IDS`：可选环境变量白名单，与命令绑定并存。
+- **私聊**：已完全开放，任何人私聊机器人即可录入 / 查询，**不需要**加入 `TELEGRAM_OPERATOR_IDS`。
+- **群聊**：仍须同时满足：
+  1. 操作者在 `TELEGRAM_OPERATOR_IDS`；
+  2. 群在 `TELEGRAM_ENTRY_CHAT_IDS`。
 
-### 群聊自动查重并录入
+取得接待员 Telegram ID（仅群聊白名单需要）任选其一：
 
-1. 把机器人拉进群并设为管理员  
-2. BotFather 关闭 Group Privacy  
-3. 群管理员发送：`绑定数据群`  
-4. 成员直接发送客户资料，例如：
+- 让接待员私聊 [@userinfobot](https://t.me/userinfobot) 或 [@getidsbot](https://t.me/getidsbot)
+- 把任意消息转发给 ID 查询机器人
+- 临时在日志中打印 `message.from.id`
 
-```text
-@someone
-张三
-0912345678
-要货到仰光
-```
-
-或：
-
-```text
-用户名: @someone
-昵称: 张三
-电话: 0912345678
-需求: 要货
-```
-
-机器人会：
-1. 自动按用户名/昵称/电话查重
-2. 已存在 → 提示命中，不重复写入
-3. 不存在 → 录入为待确认客户（`P######`）
-4. 回复中固定提醒：请用接待号私聊机器人上传该用户 Telegram ID
-
-触发条件：消息中至少包含 **@用户名** 或 **电话号码**（避免把普通闲聊误录入）。
-
-群内也可用菜单做 Telegram ID 精准选择/转发录入。
+把数字 ID 写入 `TELEGRAM_OPERATOR_IDS`。
 
 ---
 
@@ -89,17 +63,16 @@ cp .env.example .env
 2. 将本机器人添加为群成员
 3. 建议赋予机器人发消息权限
 4. 取得群 ID（可用 `@getidsbot`，或看更新中的 `chat.id`，通常形如 `-100xxxxxxxxxx`）
-5. 填入 `TELEGRAM_ARCHIVE_CHAT_ID`（若也要在该群自动查重录入，在群内发送「绑定数据群」即可）
+5. 填入 `TELEGRAM_ARCHIVE_CHAT_ID`（若该群也用于转发录入，同时加入 `TELEGRAM_ENTRY_CHAT_IDS`）
 
 ---
 
 ## 5. 把机器人加入群并配置权限
 
-1. 群设置 → 添加成员 → 选择本机器人  
-2. 将机器人设为**管理员**（便于读取消息、回复）  
-3. BotFather → Group Privacy → **Turn off**  
-4. 群管理员在群内发送：`绑定数据群`（或 `/bind`）  
-5. 看到「已绑定为数据群」后，即可发 `@用户名` / 电话做查重录入
+1. 群设置 → 添加成员 → 选择本机器人
+2. 如需机器人发送存档卡片：允许「发送消息」
+3. 如需在群内处理转发：建议关闭 Privacy Mode
+4. 未在 `TELEGRAM_ENTRY_CHAT_IDS` 中的群，机器人不会主动回复
 
 ---
 
@@ -283,7 +256,7 @@ Vite 开发代理：
 | `/pending-customers` | 待确认客户 |
 | `/import-logs` | 录入记录 |
 | `/admin-login-logs` | 管理员登录日志 |
-| `/settings` | 账号设置（改密、HTML 旧数据导入、备份导出） |
+| `/settings` | 账号设置（改密） |
 
 ### 12.2 初始管理员
 
@@ -341,10 +314,6 @@ POST /api/admin/auth/change-password
 | POST | `/api/admin/pending-customers/:id/resolve` | 后台补充身份 |
 | GET | `/api/admin/import-logs` | 录入日志 |
 | GET | `/api/admin/admin-login-logs` | 管理员登录日志 |
-| GET | `/api/admin/export/backup` | 客户工作表 xlsx |
-| GET | `/api/admin/export/backup-txt` | 客户清单 TXT |
-| GET | `/api/admin/export/backup-json` | 全量 JSON 备份（不含密码哈希） |
-| POST | `/api/admin/import/telegram-html` | 上传 Telegram 导出 HTML，导入待确认客户 |
 | GET | `/health` | 健康检查 |
 
 Swagger（非生产或 `ENABLE_SWAGGER=true`）：`/api/docs`

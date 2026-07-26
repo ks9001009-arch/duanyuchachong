@@ -5,7 +5,6 @@ import { formatCode } from '../common/utils';
 
 export const COUNTER_CUSTOMER_CODE = 'CUSTOMER_CODE';
 export const COUNTER_PENDING_CODE = 'PENDING_CODE';
-export const COUNTER_LEAD_CODE = 'LEAD_CODE';
 
 type TxClient = Prisma.TransactionClient;
 
@@ -21,11 +20,6 @@ export class CounterService {
   async nextPendingCode(tx?: TxClient): Promise<string> {
     const value = await this.nextValue(COUNTER_PENDING_CODE, tx);
     return formatCode('P', value);
-  }
-
-  async nextLeadCode(tx?: TxClient): Promise<string> {
-    const value = await this.nextValue(COUNTER_LEAD_CODE, tx);
-    return formatCode('L', value);
   }
 
   private async nextValue(key: string, tx?: TxClient): Promise<bigint> {
