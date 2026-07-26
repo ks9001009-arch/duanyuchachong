@@ -18,7 +18,7 @@ function resolveAdminWebDist(): string | null {
 
 /**
  * 同源托管 React 管理后台。
- * exclude 确保 /api/**、/health 不被 SPA 拦截。
+ * Nest 11 / path-to-regexp v8 排除语法：/api/{*any}
  */
 @Module({})
 export class AdminWebStaticModule {
@@ -39,7 +39,7 @@ export class AdminWebStaticModule {
       imports: [
         ServeStaticModule.forRoot({
           rootPath: adminDistPath,
-          exclude: ['/api/(.*)', '/api', '/health', '/health/(.*)'],
+          exclude: ['/api/{*any}', '/health', '/health/{*any}'],
         }),
       ],
     };
